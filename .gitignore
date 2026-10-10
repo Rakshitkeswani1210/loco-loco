@@ -1,0 +1,6 @@
+.DS_Store
+node_modules/
+# Apple's macOS Tahoe wallpapers, cropped as backgrounds for the mockups. Not ours to share.
+mockups/wallpapers/
+# Apple's SF Symbols, exported for the mockups by mockups/tools/export-symbols.swift. Not ours to share either.
+mockups/symbols/

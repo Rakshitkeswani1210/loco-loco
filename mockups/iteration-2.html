@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loco Loco · Iteration 2</title>
+<script src="symbols/symbols.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: #f0f0f2; }
+body { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #1d1d1f; }
+::selection { background: rgba(0,136,255,.25); }
+
+/* Board */
+.board { padding: 48px 56px 24px; width: max-content; }
+.board h1 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 36px; }
+.lane { margin-bottom: 40px; }
+.lane h2 { font-size: 15px; line-height: 20px; font-weight: 600; margin-bottom: 14px; color: #1d1d1f; }
+.lane .row-of-frames { display: grid; grid-template-columns: repeat(5, 520px); column-gap: 32px; align-items: start; }
+figure figcaption { margin-top: 12px; font-size: 14px; line-height: 20px; color: #48484a; display: flex; gap: 8px; }
+figcaption b { flex: none; min-width: 20px; font-weight: 600; font-variant-numeric: tabular-nums; color: #1d1d1f; }
+
+/* Screen crop: top-right corner of a Mac desktop */
+.screen {
+  position: relative; width: 520px; height: 600px; overflow: hidden; isolation: isolate;
+  border-radius: 12px; box-shadow: 0 0 0 1px rgba(0,0,0,.08);
+  /* Panel: a solid surface, as in Notion and Linear menus. AppKit text colours; secondary is nudged to pass 4.5:1 on white. */
+  --label: rgba(0,0,0,.85); --secondary: rgba(0,0,0,.56);
+  --surface: #fff; --ring: 0 0 0 .5px rgba(0,0,0,.14);
+  --lift: 0 4px 12px rgba(0,0,0,.08), 0 14px 36px rgba(0,0,0,.16);
+  --hover: rgba(0,0,0,.05); --press: rgba(0,0,0,.07);
+  --btn-ring: 0 0 0 .5px rgba(0,0,0,.2), 0 1px 2px rgba(0,0,0,.06);
+  --red: #d70015;
+  /* Native menus (NSMenu) keep Liquid Glass and the accent highlight */
+  --glass: rgba(246,246,248,.8); --rim: rgba(255,255,255,.75); --outline: rgba(0,0,0,.13); --menu-sep: rgba(0,0,0,.1);
+  --accent: #007aff;
+  --mb-ink: #fff; --mb-press: rgba(255,255,255,.22);
+  background-color: #2671ab;
+  color: var(--label);
+}
+.screen.dark {
+  --label: rgba(255,255,255,.88); --secondary: rgba(255,255,255,.55);
+  --surface: #252527; --ring: inset 0 0 0 .5px rgba(255,255,255,.1), 0 0 0 .5px rgba(0,0,0,.7);
+  --lift: 0 4px 12px rgba(0,0,0,.25), 0 14px 36px rgba(0,0,0,.45);
+  --hover: rgba(255,255,255,.07); --press: rgba(255,255,255,.1);
+  --btn-ring: 0 0 0 .5px rgba(255,255,255,.16);
+  --red: #ff453a;
+  --glass: rgba(36,36,40,.62); --rim: rgba(255,255,255,.17); --outline: rgba(0,0,0,.5); --menu-sep: rgba(255,255,255,.12);
+  --mb-press: rgba(255,255,255,.2);
+  background-color: #07090c;
+}
+body.export .screen { border-radius: 0; box-shadow: none; }
+
+/* macOS 26 Tahoe Day and Tahoe Night wallpapers, cropped to the top-right of a 1512×982 screen */
+.wall { position: absolute; inset: 0; z-index: -1; background: url(wallpapers/tahoe-day.jpg) center / cover; }
+.dark .wall { background-image: url(wallpapers/tahoe-night.jpg); }
+
+.sym { display: inline-block; flex: none; background: currentColor; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+
+/* Menu bar */
+.menubar { position: absolute; top: 0; left: 0; right: 0; height: 24px; display: flex; justify-content: flex-end; align-items: center; padding-right: 8px; color: var(--mb-ink); font-size: 13px; font-weight: 400; }
+.mb { height: 22px; padding: 0 7px; display: flex; align-items: center; gap: 4px; border-radius: 6px; }
+.mb.pressed { background: var(--mb-press); }
+.mb .count { font-variant-numeric: tabular-nums; }
+.mb.clock { gap: 7px; padding: 0 4px 0 8px; }
+
+/* Panel. Corners are concentric: 6pt rows + 6pt padding = 12pt panel.
+   Everything on the trailing side (times, the ··· glyph, row icons, Force stop) ends 16pt from the panel edge. */
+.panel { position: absolute; top: 29px; right: 6px; width: 320px; padding: 6px; border-radius: 12px; font-size: 13px; line-height: 16px;
+  background: var(--surface); box-shadow: var(--ring), var(--lift); }
+.group + .group { margin-top: 8px; }
+.ghdr { height: 28px; display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: var(--secondary); }
+.ghdr b { font-weight: 600; }
+.ghdr .n { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.ghdr .ib { margin-left: auto; margin-right: -5px; }
+.row { height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; }
+.row.hover { background: var(--hover); }
+.row .port { width: 44px; flex: none; display: flex; align-items: center; color: var(--secondary); font-variant-numeric: tabular-nums; }
+.row .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.dim .name, .row.show-more .name { color: var(--secondary); }
+.trail { flex: none; margin-left: 12px; height: 22px; display: flex; align-items: center; justify-content: flex-end; gap: 2px; color: var(--secondary); font-variant-numeric: tabular-nums; }
+.trail.err { color: var(--red); }
+/* Icon buttons pad 5pt either side, so a negative 5pt margin lands the glyph on the trailing edge. */
+.trail.icons { margin-right: -5px; }
+.ib { height: 22px; padding: 0 5px; display: flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--secondary); }
+.ib.hot { color: var(--label); background: var(--press); }
+.btn { height: 22px; padding: 0 8px; display: flex; align-items: center; border-radius: 5px; font-size: 12px; font-weight: 500; color: var(--label); background: var(--surface); box-shadow: var(--btn-ring); }
+.btn.hot { background-image: linear-gradient(var(--press), var(--press)); }
+
+/* Native menus. Metrics measured from real NSMenus on macOS 26: 5pt padding, 24pt rows, 11pt separators with a 1pt rule inset 16pt. */
+.glass { overflow: hidden; box-shadow: 0 0 0 .5px var(--outline), 0 14px 40px rgba(0,0,0,.2), 0 3px 10px rgba(0,0,0,.08); }
+/* Chromium fades a backdrop blur to transparent within about 3× its radius of where its input ends, so sharp text showed
+   through along the edges. The blur sits on a layer 80pt larger than the menu, clipped back to it, and stays at 12px
+   because the screen's own clip also ends the input, 17pt to the right of the ··· menu. */
+.glass::before { content: ''; position: absolute; inset: -80px; z-index: -1; background: var(--glass);
+  -webkit-backdrop-filter: blur(12px) saturate(1.6); backdrop-filter: blur(12px) saturate(1.6); }
+.glass::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 1px 0 var(--rim), inset 0 0 0 .5px var(--rim); }
+.nsmenu { position: absolute; z-index: 3; padding: 5px; border-radius: 13px; font-size: 13px; line-height: 16px; }
+.mi { position: relative; height: 24px; display: flex; align-items: center; border-radius: 8px; white-space: nowrap; }
+.mi.hi { background: var(--accent); color: #fff; }
+.msep { height: 11px; padding: 5px 11px; }
+.msep::after { content: ''; display: block; height: 1px; background: var(--menu-sep); }
+/* Context menu: 158pt wide, 18pt icon column at x16, title at x40 */
+.ctx { width: 158px; }
+.ctx .mi { padding-left: 11px; }
+.ctx .ic { width: 18px; margin-right: 6px; display: grid; place-items: center; flex: none; }
+/* ··· menu: 269pt wide, checkmark at x9, title at x24, ⌘Q ends 15.5pt and the submenu chevron 17.5pt from the edge */
+.more { width: 269px; }
+.more .mi { padding: 0 10px 0 19px; }
+.more .chk { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); display: flex; }
+/* AppKit draws the modifier and the key as separate fields: 4.5pt between their ink */
+.more .key { margin-left: auto; color: var(--secondary); display: flex; gap: 3px; }
+.more .sub { margin-left: auto; margin-right: 2.5px; display: flex; }
+
+.cursor { position: absolute; z-index: 10; width: 18px; height: 26px; filter: drop-shadow(0 1px 1.4px rgba(0,0,0,.35)); pointer-events: none; }
+</style>
+</head>
+<body>
+<main class="board" id="board"></main>
+<script>
+const S = (name, pt) => {
+  const m = SYMBOLS[name];
+  if (!m) throw new Error('missing symbol ' + name);
+  const w = (m.w * pt / 64).toFixed(2), h = (m.h * pt / 64).toFixed(2);
+  return `<span class="sym" style="width:${w}px;height:${h}px;-webkit-mask-image:url(${m.src});mask-image:url(${m.src})"></span>`;
+};
+// Size a symbol by image height, the number AppKit reports for menu item images.
+const SH = (name, h) => S(name, h * 64 / SYMBOLS[name].h);
+const spinner = (size = 14) => {
+  let s = `<svg width="${size}" height="${size}" viewBox="0 0 32 32" aria-hidden="true">`;
+  for (let i = 0; i < 12; i++) s += `<rect x="14.4" y="1.5" width="3.2" height="8.6" rx="1.6" fill="currentColor" opacity="${(1 - i * 0.068).toFixed(3)}" transform="rotate(${-i * 30} 16 16)"/>`;
+  return s + '</svg>';
+};
+const CURSOR = `<svg class="cursor" viewBox="0 0 18 26" aria-hidden="true"><path d="M2 2v18.4l4.4-4.2 3.1 7 3.1-1.3-3-6.9h6.1z" fill="#000" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+
+const T1 = '12:22 PM', T2 = '12:23 PM', T3 = '12:24 PM';
+const RUN = [
+  {port: 3000, name: 'ops-command-center', time: '10:37 AM'},
+  {port: 3001, name: 'ops-ui-lab', time: 'Oct 7'},
+  {port: 4193, name: 'weather-station', time: 'Oct 7'},
+  {port: 4211, name: 'deck-gallery-latest', time: 'Oct 8'},
+  {port: 4322, name: 'demo-deck', time: '10:50 AM'},
+  {port: 4323, name: 'launch-deck', time: '11:34 AM'},
+  {port: 8000, name: 'ops-validation-api', time: '11:09 AM'},
+  {port: 8090, name: 'auth-mock', time: '10:59 AM'},
+  {port: 8103, name: 'pr-118-release-notes-10-08', time: 'Oct 8'},
+  {port: 8741, name: 'demo-deck', time: '10:56 AM'},
+];
+const REC = [
+  {port: 8082, name: 'sales-dashboard-prototype', time: '11:48 AM'},
+  {port: 3100, name: 'design-system', time: 'Oct 8'},
+  {port: 8080, name: 'weekly-team-report', time: 'Oct 7'},
+];
+const API = {port: 8000, name: 'ops-validation-api'};
+const patch = (list, port, p) => list.map(r => r.port === port ? {...r, ...p} : r);
+const noApi = RUN.filter(r => r.port !== 8000);
+const apiAgain = patch(RUN, 8000, {time: T2});
+const FAILED = {port: 3100, name: 'design-system', failed: true, reason: 'Exited with code 1'};
+// Stop all at T3: all ten stop together, so ties sort by port. Stopped shows the 5 latest; the other 8 sit under More.
+const ALL_STOPPED = RUN.map(r => ({...r, time: T3}));
+const SHOW = 5;
+
+const ICON = {stop: () => SH('stop.fill-regular', 11), restart: () => SH('arrow.clockwise-regular', 13), log: () => SH('doc.text-regular', 13)};
+function trail(r, group) {
+  if (r.busy) return `<span class="trail">${spinner(14)}</span>`;
+  if (r.force) return `<span class="trail"><span class="btn${r.hot ? ' hot' : ''}">Force stop</span></span>`;
+  if (r.hover && !r.menuOpen) {
+    const btns = r.failed ? ['log', 'restart'] : group === 'running' ? ['stop'] : ['restart'];
+    return `<span class="trail icons">${btns.map((b, i) => `<span class="ib${r.hot && i === btns.length - 1 ? ' hot' : ''}">${ICON[b]()}</span>`).join('')}</span>`;
+  }
+  if (r.failed) return `<span class="trail err">${r.reason}</span>`;
+  return `<span class="trail">${r.time}</span>`;
+}
+function row(r, group) {
+  const cls = ['row', r.hover && 'hover', r.dim && 'dim'].filter(Boolean).join(' ');
+  return `<div class="${cls}" data-port="${r.port}" data-group="${group}"><span class="port">${r.port}</span><span class="name">${r.name}</span>${trail(r, group)}</div>`;
+}
+function header(label, n, menu) {
+  const btn = menu ? `<span class="ib${menu === 'open' ? ' hot' : ''}" data-more>${S('ellipsis-medium', 13)}</span>` : '';
+  return `<div class="ghdr"><b>${label}</b>${n ? `<span class="n">${n}</span>` : ''}${btn}</div>`;
+}
+function panel({running = [], stopped = [], moreOpen}) {
+  const menu = moreOpen ? 'open' : 'closed';
+  let h = `<div class="group">${running.length ? header('Running', running.length, menu) + running.map(r => row(r, 'running')).join('') : header('Nothing running', 0, menu)}</div>`;
+  if (stopped.length) {
+    const more = stopped.length > SHOW ? `<div class="row show-more"><span class="port">${S('ellipsis-medium', 13)}</span><span class="name">More</span></div>` : '';
+    h += `<div class="group">${header('Stopped', stopped.length)}${stopped.slice(0, SHOW).map(r => row(r, 'stopped')).join('')}${more}</div>`;
+  }
+  return `<div class="panel" role="menu">${h}</div>`;
+}
+function menubar({count, pressed, clock = T1}) {
+  return `<div class="menubar"><div class="mb ours${pressed ? ' pressed' : ''}">${S('server.rack-medium', 13)}${count ? `<span class="count">${count}</span>` : ''}</div><div class="mb">${S('wifi-regular', 13.5)}</div><div class="mb">${S('switch.2-regular', 12.5)}</div><div class="mb clock"><span>Fri Oct 9</span><span>${clock}</span></div></div>`;
+}
+// Icon heights are the image sizes AppKit reported for these symbols in a real context menu.
+function contextMenu(hi) {
+  const items = [['globe-regular', 13, 'Open in browser'], ['link-regular', 14, 'Copy URL'], '-', ['arrow.clockwise-regular', 13, 'Restart'], ['stop.fill-regular', 11, 'Stop'], '-',
+    ['folder-regular', 12, 'Show in Finder'], ['terminal-regular', 12, 'Open in Terminal'], ['chevron.left.forwardslash.chevron.right-regular', 12, 'Open in Cursor'], ['doc.text-regular', 13, 'Show log']];
+  return `<div class="nsmenu ctx glass" role="menu">${items.map(it => it === '-' ? '<div class="msep"></div>' : `<div class="mi${it[2] === hi ? ' hi' : ''}"><span class="ic">${SH(it[0], it[1])}</span>${it[2]}</div>`).join('')}</div>`;
+}
+function moreMenu() {
+  const items = [['Stop all…'], '-', ['Launch at login', 'on'], ['Show count in menu bar', 'on'], ['Show app and macOS servers'], '-', ['Keep history', 'sub'], ['Clear history…'], '-', ['Quit Loco Loco', '⌘Q']];
+  const tail = t => t === 'on' ? `<span class="chk">${SH('checkmark-semibold', 11)}</span>` : t === 'sub' ? `<span class="sub">${SH('chevron.right-semibold', 11)}</span>` : t ? `<span class="key">${[...t].map(c => `<span>${c}</span>`).join('')}</span>` : '';
+  return `<div class="nsmenu more glass" role="menu">${items.map(it => it === '-' ? '<div class="msep"></div>' : `<div class="mi">${it[1] === 'on' ? tail('on') : ''}${it[0]}${it[1] && it[1] !== 'on' ? tail(it[1]) : ''}</div>`).join('')}</div>`;
+}
+
+const FRAMES = [
+  {lane: 'Stop a server', id: '01-menu-bar', cap: 'Menu bar shows how many servers are running', count: 10, cursor: {t: '.mb.ours .count', fx: 1, fy: .55, dx: 1}},
+  {id: '02-open', cap: 'Click: running servers, then stopped ones', count: 10, pressed: true, running: RUN, stopped: REC, cursor: {t: '.mb.ours .count', fx: 1, fy: .55, dx: 1}},
+  {id: '03-hover-stop', cap: 'Hover: Stop takes the place of the time', count: 10, pressed: true, running: patch(RUN, 8000, {hover: true, hot: true}), stopped: REC, cursor: {t: '[data-port="8000"] .ib .sym', fx: 1, fy: .5, dx: 1.5}},
+  {id: '04-stopping', cap: 'Stopping', count: 10, pressed: true, running: patch(RUN, 8000, {hover: true, busy: true, dim: true}), stopped: REC, cursor: {t: '[data-port="8000"] .trail svg', fx: 1, fy: .5, dx: 1.5}},
+  {id: '05-stopped', cap: 'It moves to Stopped, and the count drops to 9', count: 9, pressed: true, running: noApi, stopped: [{...API, time: T1}, ...REC]},
+
+  {lane: 'Bring it back', id: '06-hover-restart', cap: 'Hover a stopped server: Restart', count: 9, pressed: true, clock: T2, running: noApi, stopped: [{...API, time: T1, hover: true, hot: true}, ...REC], cursor: {t: '[data-group="stopped"][data-port="8000"] .ib .sym', fx: 1, fy: .5, dx: 1.5}},
+  {id: '07-starting', cap: 'Starts in the background, same folder and command', count: 10, pressed: true, clock: T2, running: patch(RUN, 8000, {busy: true, dim: true}), stopped: REC},
+  {id: '08-running-again', cap: 'Running again. Click any row to open it in the browser', count: 10, pressed: true, clock: T2, running: patch(apiAgain, 3000, {hover: true}), stopped: REC, cursor: {t: '[data-port="3000"] .name', text: true, fx: 1, fy: .5, dx: 8}},
+  {id: '09-didnt-start', cap: 'Didn’t start: the reason takes the place of the time', count: 10, pressed: true, clock: T3, running: apiAgain, stopped: [FAILED, REC[0], REC[2]]},
+  {id: '10-log-restart', cap: 'Hover it for Show log and Restart', count: 10, pressed: true, clock: T3, running: apiAgain, stopped: [{...FAILED, hover: true, hot: true}, REC[0], REC[2]], cursor: {t: '[data-port="3100"] .ib:last-child .sym', fx: 1, fy: .5, dx: 1.5}},
+
+  {lane: 'Other states', id: '11-context-menu', cap: 'Right-click for everything else', count: 10, pressed: true, clock: T2, running: patch(apiAgain, 8000, {hover: true, menuOpen: true}), stopped: REC, menu: {row: 8000, hi: 'Restart'}, cursor: {t: '.mi.hi', text: true, fx: 1, fy: .5, dx: 8}},
+  {id: '12-force-stop', cap: 'Didn’t stop within 5 seconds: Force stop', count: 10, pressed: true, running: patch(RUN, 8000, {hover: true, force: true, hot: true, dim: true}), stopped: REC, cursor: {t: '.btn', text: true, fx: 1, fy: .45, dx: 2}},
+  {id: '13-empty', cap: 'After Stop all: nothing running', count: 0, pressed: true, clock: T3, running: [], stopped: [...ALL_STOPPED, ...REC]},
+  {id: '14-more-menu', cap: '··· menu: Stop all, settings and Quit', count: 10, pressed: true, running: RUN, stopped: REC, moreOpen: true, cursor: {t: '[data-more] .sym', fx: 1, fy: .5, dx: 1.5}},
+  {id: '15-dark', cap: 'Dark appearance', count: 10, pressed: true, dark: true, running: patch(RUN, 4193, {hover: true}), stopped: REC, cursor: {t: '[data-port="4193"] .name', text: true, fx: 1, fy: .5, dx: 8}},
+];
+
+// The box of an element's text alone. A row's name fills the space up to the time, so its own box is too wide.
+function textRect(el) {
+  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {acceptNode: n => n.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP});
+  const first = w.nextNode(); let last = first;
+  for (let n; (n = w.nextNode());) last = n;
+  const r = document.createRange(); r.setStart(first, 0); r.setEnd(last, last.length);
+  return r.getBoundingClientRect();
+}
+
+function render() {
+  const board = document.getElementById('board');
+  let html = '<h1>Loco Loco · Iteration 2</h1>', lane = null, n = 0;
+  for (const f of FRAMES) {
+    if (f.lane) { if (lane) html += '</div></section>'; lane = f.lane; html += `<section class="lane"><h2>${f.lane}</h2><div class="row-of-frames">`; }
+    n++;
+    const body = menubar(f) + (f.running ? panel(f) : '') + (f.menu ? contextMenu(f.menu.hi) : '') + (f.moreOpen ? moreMenu() : '') + (f.cursor ? CURSOR : '');
+    html += `<figure><div class="screen${f.dark ? ' dark' : ''}" data-id="${f.id}"><div class="wall"></div>${body}</div><figcaption><b>${n}</b><span>${f.cap}</span></figcaption></figure>`;
+  }
+  board.innerHTML = html + '</div></section>';
+
+  for (const f of FRAMES) {
+    const scr = board.querySelector(`.screen[data-id="${f.id}"]`), box = scr.getBoundingClientRect();
+    const at = (el, fx, fy, text) => { const r = text ? textRect(el) : el.getBoundingClientRect(); return [r.left - box.left + fx * r.width, r.top - box.top + fy * r.height]; };
+    if (f.menu) {
+      // A context menu opens with its top-left at the pointer. Right-click near the row's bottom edge so the row stays readable.
+      const rowEl = scr.querySelector(`[data-port="${f.menu.row}"]`), m = scr.querySelector('.ctx');
+      const [x] = at(rowEl.querySelector('.name'), .35, .5), bottom = rowEl.getBoundingClientRect().bottom - box.top;
+      m.style.left = Math.round(Math.min(x + 1, 520 - m.offsetWidth - 6)) + 'px';
+      m.style.top = Math.round(bottom - 2) + 'px';
+    }
+    if (f.moreOpen) {
+      // The ··· menu drops 4pt below its button, right edges aligned, so it stays on screen.
+      const b = scr.querySelector('[data-more]').getBoundingClientRect(), m = scr.querySelector('.nsmenu.more');
+      m.style.left = (b.right - box.left - m.offsetWidth) + 'px';
+      m.style.top = (b.bottom - box.top + 4) + 'px';
+    }
+    if (f.cursor) {
+      // The tip lands just past a glyph or label, so the arrow's body falls on empty space and covers no text or icon.
+      const {t, fx, fy, dx = 0, dy = 0, text} = f.cursor, [x, y] = at(scr.querySelector(t), fx, fy, text), c = scr.querySelector('.cursor');
+      c.style.left = (Math.round((x + dx) * 2) / 2 - 2) + 'px'; c.style.top = (Math.round((y + dy) * 2) / 2 - 2) + 'px';
+    }
+  }
+  window.__ready = true;
+}
+document.fonts.ready.then(render);
+</script>
+</body>
+</html>

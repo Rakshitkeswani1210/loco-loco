@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Localhost: user flow</title>
+<script src="symbols/symbols.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: #f0f0f2; }
+body { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #1d1d1f; }
+::selection { background: rgba(0,136,255,.25); }
+
+/* Board */
+.board { padding: 48px 56px 24px; width: max-content; }
+.board h1 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 36px; }
+.lane { margin-bottom: 40px; }
+.lane h2 { font-size: 15px; line-height: 20px; font-weight: 600; margin-bottom: 14px; color: #1d1d1f; }
+.lane .row-of-frames { display: grid; grid-template-columns: repeat(5, 520px); column-gap: 32px; align-items: start; }
+figure figcaption { margin-top: 12px; font-size: 14px; line-height: 20px; color: #48484a; display: flex; gap: 8px; }
+figcaption b { flex: none; min-width: 20px; font-weight: 600; font-variant-numeric: tabular-nums; color: #1d1d1f; }
+
+/* Screen crop: top-right corner of a Mac desktop */
+.screen {
+  position: relative; width: 520px; height: 600px; overflow: hidden; isolation: isolate;
+  border-radius: 12px; box-shadow: 0 0 0 1px rgba(0,0,0,.08);
+  /* AppKit values read from this Mac. Secondary sits a little darker than the flat 50% to stand in for vibrancy. */
+  --label: rgba(0,0,0,.85); --secondary: rgba(0,0,0,.56); --tertiary: rgba(0,0,0,.26);
+  --sep: rgba(0,0,0,.1); --hover: rgba(0,0,0,.065);
+  --glass: rgba(246,246,248,.8); --rim: rgba(255,255,255,.75); --outline: rgba(0,0,0,.13);
+  --mb-ink: #fff; --mb-press: rgba(255,255,255,.22); --pill: rgba(255,255,255,.92); --pill-hot: #fff;
+  --orange: #ff8d28; --accent: #007aff;
+  background-color: #2671ab;
+  color: var(--label);
+}
+.screen.dark {
+  --label: rgba(255,255,255,.85); --secondary: rgba(255,255,255,.55); --tertiary: rgba(255,255,255,.25);
+  --sep: rgba(255,255,255,.12); --hover: rgba(255,255,255,.09);
+  --glass: rgba(36,36,40,.62); --rim: rgba(255,255,255,.17); --outline: rgba(0,0,0,.5);
+  --mb-ink: #fff; --mb-press: rgba(255,255,255,.2); --pill: rgba(255,255,255,.16); --pill-hot: rgba(255,255,255,.24);
+  --orange: #ff9230; --accent: #007aff;
+  background-color: #07090c;
+}
+body.export .screen { border-radius: 0; box-shadow: none; }
+
+/* macOS 26 Tahoe Day and Tahoe Night wallpapers, cropped to the top-right of a 1512×982 screen */
+.wall { position: absolute; inset: 0; z-index: -1; background: url(wallpapers/tahoe-day.jpg) center / cover; }
+.dark .wall { background-image: url(wallpapers/tahoe-night.jpg); }
+
+.sym { display: inline-block; flex: none; background: currentColor; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+
+/* Menu bar */
+.menubar { position: absolute; top: 0; left: 0; right: 0; height: 24px; display: flex; justify-content: flex-end; align-items: center; padding-right: 8px; color: var(--mb-ink); font-size: 13px; font-weight: 400; }
+.mb { height: 22px; padding: 0 7px; display: flex; align-items: center; gap: 4px; border-radius: 6px; }
+.mb.pressed { background: var(--mb-press); }
+.mb .count { font-variant-numeric: tabular-nums; }
+.mb.clock { gap: 7px; padding: 0 4px 0 8px; }
+
+/* Panel (MenuBarExtra window, menu styled). Row, header, separator and padding sizes match NSMenu as measured on macOS 26.
+   Corners are concentric: 8pt rows + 5pt padding = 13pt panel. */
+.glass { background: var(--glass); -webkit-backdrop-filter: blur(26px) saturate(1.6); backdrop-filter: blur(26px) saturate(1.6);
+  box-shadow: inset 0 1px 0 var(--rim), inset 0 0 0 .5px var(--rim), 0 0 0 .5px var(--outline), 0 14px 40px rgba(0,0,0,.2), 0 3px 10px rgba(0,0,0,.08); }
+.panel { position: absolute; top: 29px; right: 6px; width: 320px; padding: 5px; border-radius: 13px; font-size: 13px; }
+.hdr { height: 24px; padding: 6px 10px 0; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--secondary); }
+/* Collapsed history, like Wi-Fi's Other Networks. The chevron ends on the time column's right edge. */
+.hdr.disc { display: flex; justify-content: space-between; }
+.hdr.disc .chev { height: 16px; display: grid; place-items: center; }
+.row { position: relative; height: 24px; display: flex; align-items: center; padding: 0 5px 0 10px; border-radius: 8px; }
+.row.hover { background: var(--hover); }
+.row .port { width: 44px; flex: none; color: var(--secondary); font-variant-numeric: tabular-nums; }
+.row .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.dim .name { color: var(--secondary); }
+.trail { flex: none; margin-left: 10px; min-width: 22px; height: 22px; display: flex; align-items: center; justify-content: flex-end; gap: 4px; color: var(--secondary); font-variant-numeric: tabular-nums; padding-right: 5px; }
+.trail.ctl { gap: 12px; }
+.trail.busy { color: var(--secondary); }
+/* Plain glyph buttons: no disc. The glyph darkens under the pointer. */
+.cbtn { height: 22px; display: grid; place-items: center; color: var(--secondary); }
+.cbtn.hot { color: var(--label); }
+.pill { height: 20px; padding: 0 9px; border-radius: 10px; display: flex; align-items: center; font-size: 12px; font-weight: 500; color: var(--label); background: var(--pill); box-shadow: 0 0 0 .5px rgba(0,0,0,.12), 0 .5px 1.5px rgba(0,0,0,.16); }
+.pill.hot { background: var(--pill-hot); }
+.warn { color: var(--orange); display: flex; }
+.sep { height: 1px; margin: 5px 10px; background: var(--sep); }
+.item { height: 24px; display: flex; align-items: center; padding: 0 10px; border-radius: 8px; }
+.item .key { margin-left: auto; color: var(--secondary); }
+.item.dis { color: var(--tertiary); }
+/* Information, not a disabled command, so it uses the secondary colour. */
+.item.note { color: var(--secondary); }
+
+/* Context menu (NSMenu) */
+.cmenu { position: absolute; z-index: 3; width: 210px; padding: 5px; border-radius: 13px; font-size: 13px; }
+.cm { height: 24px; display: flex; align-items: center; gap: 7px; padding: 0 9px 0 7px; border-radius: 8px; }
+.cm .ic { width: 18px; display: grid; place-items: center; flex: none; }
+.cm.hi { background: var(--accent); color: #fff; }
+.cmsep { height: 1px; margin: 5px 9px; background: var(--sep); }
+
+/* Settings window */
+.win { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); width: 456px; border-radius: 16px; overflow: hidden; background: #f3f3f5; font-size: 13px;
+  box-shadow: 0 0 0 .5px rgba(0,0,0,.22), 0 24px 64px rgba(0,0,0,.28), 0 4px 14px rgba(0,0,0,.1); }
+.tb { height: 40px; position: relative; display: flex; align-items: center; justify-content: center; font-weight: 600; color: rgba(0,0,0,.85); }
+.lights { position: absolute; left: 15px; top: 14px; display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.14); }
+.form { padding: 4px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+.group { background: rgba(255,255,255,.72); border-radius: 12px; box-shadow: 0 0 0 .5px rgba(0,0,0,.08); }
+.frow { min-height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
+.frow + .frow { box-shadow: inset 0 .5px 0 rgba(0,0,0,.1); }
+/* Pane-level buttons sit below the last group, right-aligned, as in System Settings. */
+.fbtns { display: flex; justify-content: flex-end; }
+.sw { width: 34px; height: 19px; border-radius: 10px; background: rgba(0,0,0,.11); position: relative; }
+.sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2.5px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.04); }
+.sw.on { background: var(--accent); }
+.sw.on::after { left: 17px; }
+.pbtn { height: 22px; padding: 0 12px; border-radius: 11px; display: flex; align-items: center; gap: 7px; background: #fff; box-shadow: 0 0 0 .5px rgba(0,0,0,.14), 0 .5px 1.5px rgba(0,0,0,.14); }
+.pbtn.popup { padding: 0 7px 0 11px; }
+.pbtn.popup .sym { color: rgba(0,0,0,.6); }
+
+.cursor { position: absolute; z-index: 10; width: 18px; height: 26px; filter: drop-shadow(0 1px 1.4px rgba(0,0,0,.35)); pointer-events: none; }
+</style>
+</head>
+<body>
+<main class="board" id="board"></main>
+<script>
+const S = (name, pt) => {
+  const m = SYMBOLS[name];
+  if (!m) throw new Error('missing symbol ' + name);
+  const w = (m.w * pt / 64).toFixed(2), h = (m.h * pt / 64).toFixed(2);
+  return `<span class="sym" style="width:${w}px;height:${h}px;-webkit-mask-image:url(${m.src});mask-image:url(${m.src})"></span>`;
+};
+const spinner = (size = 14) => {
+  let s = `<svg width="${size}" height="${size}" viewBox="0 0 32 32" aria-hidden="true">`;
+  for (let i = 0; i < 12; i++) s += `<rect x="14.4" y="1.5" width="3.2" height="8.6" rx="1.6" fill="currentColor" opacity="${(1 - i * 0.068).toFixed(3)}" transform="rotate(${-i * 30} 16 16)"/>`;
+  return s + '</svg>';
+};
+const CURSOR = `<svg class="cursor" viewBox="0 0 18 26" aria-hidden="true"><path d="M2 2v18.4l4.4-4.2 3.1 7 3.1-1.3-3-6.9h6.1z" fill="#000" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+
+const T1 = '12:22 PM', T2 = '12:23 PM', T3 = '12:24 PM';
+const RUN = [
+  {port: 3000, name: 'ops-command-center', time: '10:37 AM'},
+  {port: 3001, name: 'ops-ui-lab', time: 'Oct 7'},
+  {port: 4193, name: 'weather-station', time: 'Oct 7'},
+  {port: 4211, name: 'deck-gallery-latest', time: 'Oct 8'},
+  {port: 4322, name: 'demo-deck', time: '10:50 AM'},
+  {port: 4323, name: 'launch-deck', time: '11:34 AM'},
+  {port: 8000, name: 'ops-validation-api', time: '11:09 AM'},
+  {port: 8090, name: 'auth-mock', time: '10:59 AM'},
+  {port: 8103, name: 'pr-118-release-notes-10-08', time: 'Oct 8'},
+  {port: 8741, name: 'demo-deck', time: '10:56 AM'},
+];
+const REC = [
+  {port: 8082, name: 'sales-dashboard-prototype', time: '11:48 AM'},
+  {port: 3100, name: 'design-system', time: 'Oct 8'},
+  {port: 8080, name: 'weekly-team-report', time: 'Oct 7'},
+];
+const API = {port: 8000, name: 'ops-validation-api'};
+const patch = (list, port, p) => list.map(r => r.port === port ? {...r, ...p} : r);
+const noApi = RUN.filter(r => r.port !== 8000);
+const apiAgain = patch(RUN, 8000, {time: T2});
+const FAILED = {port: 3100, name: 'design-system', failed: true, reason: 'Exited with code 1'};
+// Stop All at T3: all ten stop together, so ties sort by port. Recent shows 5; the other 8 sit under More.
+const ALL_STOPPED = RUN.map(r => ({...r, time: T3}));
+
+function trail(r, section) {
+  if (r.busy) return `<span class="trail busy">${spinner(14)}</span>`;
+  if (r.force) return `<span class="trail ctl"><span class="pill${r.hot ? ' hot' : ''}">Force Stop</span></span>`;
+  if (r.hover && !r.menuOpen) {
+    const btns = r.failed ? [['doc.text-regular', 13], ['arrow.clockwise-regular', 13]] : section === 'running' ? [['stop.fill-regular', 12]] : [['arrow.clockwise-regular', 13]];
+    return `<span class="trail ctl">${btns.map(([n, pt], i) => `<span class="cbtn${r.hot && i === btns.length - 1 ? ' hot' : ''}">${S(n, pt)}</span>`).join('')}</span>`;
+  }
+  if (r.failed) return `<span class="trail"><span class="warn">${S('exclamationmark.triangle.fill-regular', 12.5)}</span>${r.reason}</span>`;
+  return `<span class="trail">${r.time}</span>`;
+}
+function row(r, section) {
+  const cls = ['row', r.hover && 'hover', r.dim && 'dim'].filter(Boolean).join(' ');
+  return `<div class="${cls}" data-port="${r.port}" data-section="${section}"><span class="port">${r.port}</span><span class="text"><span class="name">${r.name}</span></span>${trail(r, section)}</div>`;
+}
+function panel({running = [], recent = [], more = false}) {
+  let h = running.length ? `<div class="hdr">Running</div>${running.map(r => row(r, 'running')).join('')}` : `<div class="item note">No servers running</div>`;
+  if (recent.length) h += `<div class="sep"></div><div class="hdr">Recent</div>${recent.map(r => row(r, 'recent')).join('')}`;
+  if (more) h += `<div class="sep"></div><div class="hdr disc">More<span class="chev">${S('chevron.right-semibold', 10)}</span></div>`;
+  h += `<div class="sep"></div><div class="item${running.length ? '' : ' dis'}">Stop All…</div><div class="item">Settings…<span class="key">⌘,</span></div><div class="item">Quit Localhost<span class="key">⌘Q</span></div>`;
+  return `<div class="panel glass" role="menu">${h}</div>`;
+}
+function menubar({count, pressed, clock = T1}) {
+  return `<div class="menubar"><div class="mb ours${pressed ? ' pressed' : ''}">${S('server.rack-medium', 13)}${count ? `<span class="count">${count}</span>` : ''}</div><div class="mb">${S('wifi-regular', 13.5)}</div><div class="mb">${S('switch.2-regular', 12.5)}</div><div class="mb clock"><span>Fri Oct 9</span><span>${clock}</span></div></div>`;
+}
+function contextMenu(hi) {
+  const items = [['globe-regular', 'Open in Browser'], ['link-regular', 'Copy URL'], '-', ['arrow.clockwise-regular', 'Restart'], ['stop.fill-regular', 'Stop'], '-', ['folder-regular', 'Show in Finder'], ['terminal-regular', 'Open in Terminal'], ['doc.text-regular', 'Show Log']];
+  return `<div class="cmenu glass" role="menu">${items.map(it => it === '-' ? '<div class="cmsep"></div>' : `<div class="cm${it[1] === hi ? ' hi' : ''}" data-item="${it[1]}"><span class="ic">${S(it[0], 13)}</span>${it[1]}</div>`).join('')}</div>`;
+}
+function settingsWindow() {
+  return `<div class="win" role="dialog" aria-label="Localhost Settings"><div class="tb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#d6d6d8"></i></div>Localhost Settings</div>
+  <div class="form">
+    <div class="group"><div class="frow">Launch at login<span class="sw on"></span></div><div class="frow">Show count in menu bar<span class="sw on"></span></div><div class="frow">Show servers run by apps and macOS<span class="sw"></span></div></div>
+    <div class="group"><div class="frow">Keep history<span class="pbtn popup">20 servers${S('chevron.up.chevron.down-semibold', 8.5)}</span></div></div>
+    <div class="fbtns"><span class="pbtn">Clear History…</span></div>
+  </div></div>`;
+}
+
+const FRAMES = [
+  {lane: 'Stop a server', id: '01-menu-bar', cap: 'Menu bar shows how many servers are running', count: 10, cursor: {t: '.mb.ours', fx: .35, fy: .55}},
+  {id: '02-open', cap: 'Click: running servers, then recently stopped ones', count: 10, pressed: true, running: RUN, recent: REC, cursor: {t: '.mb.ours', fx: .35, fy: .55}},
+  {id: '03-hover-stop', cap: 'Hover: Stop takes the place of the time', count: 10, pressed: true, running: patch(RUN, 8000, {hover: true, hot: true}), recent: REC, cursor: {t: '[data-port="8000"] .cbtn', fx: .3, fy: .78}},
+  {id: '04-stopping', cap: 'Stopping', count: 10, pressed: true, running: patch(RUN, 8000, {hover: true, busy: true, dim: true}), recent: REC, cursor: {t: '[data-port="8000"] .trail', fx: .5, fy: .5}},
+  {id: '05-stopped', cap: 'Stopped: it moves to Recent, and the count drops to 9', count: 9, pressed: true, running: noApi, recent: [{...API, time: T1}, ...REC]},
+
+  {lane: 'Bring it back', id: '06-hover-restart', cap: 'Hover a recent server: Restart', count: 9, pressed: true, clock: T2, running: noApi, recent: [{...API, time: T1, hover: true, hot: true}, ...REC], cursor: {t: '[data-section="recent"][data-port="8000"] .cbtn', fx: .3, fy: .78}},
+  {id: '07-starting', cap: 'Starts in the background, same folder and command', count: 9, pressed: true, clock: T2, running: patch(RUN, 8000, {busy: true, dim: true}), recent: REC},
+  {id: '08-running-again', cap: 'Running again. Click any row to open it in the browser', count: 10, pressed: true, clock: T2, running: patch(apiAgain, 3000, {hover: true}), recent: REC, cursor: {t: '[data-port="3000"] .name', fx: .55, fy: .55}},
+  {id: '09-didnt-start', cap: 'Didn’t start: the reason takes the place of the time', count: 10, pressed: true, clock: T3, running: apiAgain, recent: [FAILED, REC[0], REC[2]]},
+  {id: '10-log-restart', cap: 'Hover it for Show Log and Restart', count: 10, pressed: true, clock: T3, running: apiAgain, recent: [{...FAILED, hover: true, hot: true}, REC[0], REC[2]], cursor: {t: '[data-port="3100"] .cbtn:last-child', fx: .3, fy: .78}},
+
+  {lane: 'Other states', id: '11-context-menu', cap: 'Right-click for everything else', count: 10, pressed: true, clock: T2, running: patch(apiAgain, 8000, {hover: true, menuOpen: true}), recent: REC, menu: {row: 8000, hi: 'Restart'}, cursor: {t: '.cm.hi', fx: .42, fy: .55}},
+  {id: '12-force-stop', cap: 'Didn’t stop within 5 seconds: Force Stop', count: 10, pressed: true, running: patch(RUN, 8000, {hover: true, force: true, hot: true, dim: true}), recent: REC, cursor: {t: '.pill', fx: .22, fy: .8}},
+  {id: '13-empty', cap: 'After Stop All: nothing running', count: 0, pressed: true, clock: T3, running: [], recent: ALL_STOPPED.slice(0, 5), more: true},
+  {id: '14-settings', cap: 'Settings', count: 10, settings: true},
+  {id: '15-dark', cap: 'Dark appearance', count: 10, pressed: true, dark: true, running: patch(RUN, 4193, {hover: true}), recent: REC, cursor: {t: '[data-port="4193"] .name', fx: .5, fy: .55}},
+];
+
+function render() {
+  const board = document.getElementById('board');
+  let html = '<h1>Localhost: user flow</h1>', lane = null, n = 0;
+  for (const f of FRAMES) {
+    if (f.lane) { if (lane) html += '</div></section>'; lane = f.lane; html += `<section class="lane"><h2>${f.lane}</h2><div class="row-of-frames">`; }
+    n++;
+    const body = menubar(f) + (f.settings ? settingsWindow() : f.running ? panel(f) : '') + (f.menu ? contextMenu(f.menu.hi) : '') + (f.cursor ? CURSOR : '');
+    html += `<figure><div class="screen${f.dark ? ' dark' : ''}" data-id="${f.id}"><div class="wall"></div>${body}</div><figcaption><b>${n}</b><span>${f.cap}</span></figcaption></figure>`;
+  }
+  board.innerHTML = html + '</div></section>';
+
+  for (const f of FRAMES) {
+    const scr = board.querySelector(`.screen[data-id="${f.id}"]`), box = scr.getBoundingClientRect();
+    const at = (el, fx, fy) => { const r = el.getBoundingClientRect(); return [r.left - box.left + fx * r.width, r.top - box.top + fy * r.height]; };
+    if (f.menu) {
+      // A context menu opens with its top-left at the pointer. Right-click near the row's bottom edge so the row stays readable.
+      const rowEl = scr.querySelector(`[data-port="${f.menu.row}"]`), m = scr.querySelector('.cmenu');
+      const [x] = at(rowEl.querySelector('.name'), .6, .5), bottom = rowEl.getBoundingClientRect().bottom - box.top;
+      m.style.left = Math.min(x + 1, 520 - m.offsetWidth - 6) + 'px';
+      m.style.top = (bottom - 2) + 'px';
+    }
+    if (f.cursor) {
+      const [x, y] = at(scr.querySelector(f.cursor.t), f.cursor.fx, f.cursor.fy), c = scr.querySelector('.cursor');
+      c.style.left = (x - 2) + 'px'; c.style.top = (y - 2) + 'px';
+    }
+  }
+  window.__ready = true;
+}
+document.fonts.ready.then(render);
+</script>
+</body>
+</html>
