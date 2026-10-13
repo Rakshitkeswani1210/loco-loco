@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LocoCore/LocoCore.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LocoCore.Tests/LocoCore.Tests.csproj" />
+  </Folder>
+</Solution>
