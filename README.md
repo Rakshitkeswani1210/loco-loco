@@ -10,7 +10,7 @@ You need macOS 14 or later and the Xcode Command Line Tools. If `swift --version
 
 ```sh
 git clone https://github.com/Rakshitkeswani1210/loco-loco.git
-cd loco-loco/app
+cd loco-loco/app/macos
 ./scripts/build.sh
 ```
 
@@ -43,7 +43,7 @@ Choose Quit Loco Loco from the ··· menu, then delete `~/Applications/Loco Loc
 
 ## Develop
 
-- `app/scripts/test.sh` runs the tests.
+- `app/macos/scripts/test.sh` runs the Mac tests.
 - `docs/PLAN.md` has the decisions and how the app was checked. `PRODUCT.md` is the product brief.
 - `docs/flow/` has the flow images, and `docs/brand/` the octopus.
 - The HTML mockups in `mockups/` use SF Symbols, which aren't in the repo. To export them from your Mac, run this from the repo root:

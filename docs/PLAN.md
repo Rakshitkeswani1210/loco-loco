@@ -100,7 +100,7 @@ An octopus, so the app feels friendly rather than technical. Direction: Deep sea
 - Menu bar: a solid octopus as a 16pt template image, so macOS tints it like the other icons. When nothing is running, its eyes close and the count hides.
 - Panel: when nothing is running, a small line octopus with closed eyes sits under "Nothing running" (34pt tall, 1.5pt line, tertiary colour).
 - App icon: the line octopus on the navy squircle, with a heavier line at 32px and below. Alerts and Finder show it. macOS 26 keeps it as is, with no grey frame.
-- One geometry for all three: `app/Sources/LocoLoco/Octopus.swift`, a port of the board's generator.
+- One geometry for all three: `app/macos/Sources/LocoLoco/Octopus.swift`, a port of the board's generator.
 
 ## Build
 
@@ -111,7 +111,7 @@ An octopus, so the app feels friendly rather than technical. Direction: Deep sea
 - Two things found while measuring real menus on macOS 26: an item that uses the system's quit action gets an automatic xmark icon, so Quit uses its own action; and menu item badges draw a grey capsule, so the menus don't use them.
 - No network access, no telemetry, no admin rights. It can only stop processes you own.
 
-**Building and testing** (from `app/`)
+**Building and testing** (from `app/macos/`)
 - `scripts/build.sh` builds the release app, signs it locally, quits the running copy, installs it to `~/Applications` and opens it. `--no-install` stops after the build. It redraws the app icon with `scripts/make-icon.swift` when that file or `Octopus.swift` changes.
 - `scripts/test.sh` runs the LocoCore tests. With only the Command Line Tools, it points SwiftPM at their Testing framework.
 - `swift run loco-scan` prints the servers the app would list, from the same scanner.

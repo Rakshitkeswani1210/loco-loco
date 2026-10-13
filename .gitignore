@@ -4,3 +4,5 @@ node_modules/
 mockups/wallpapers/
 # Apple's SF Symbols, exported for the mockups by mockups/tools/export-symbols.swift. Not ours to share either.
 mockups/symbols/
+bin/
+obj/
