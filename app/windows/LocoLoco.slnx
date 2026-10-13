@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/loco-scan/loco-scan.csproj" />
     <Project Path="src/LocoCore/LocoCore.csproj" />
   </Folder>
   <Folder Name="/tests/">

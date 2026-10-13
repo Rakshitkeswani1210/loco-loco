@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A developer tool, like the Mac one. Run it with dotnet run and the project path. Not shipped in the zip. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>loco-scan</AssemblyName>
+    <RootNamespace>LocoScan</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LocoCore\LocoCore.csproj" />
+  </ItemGroup>
+</Project>
