@@ -38,7 +38,15 @@ jobs:
           node-version: '22'
 
       - name: Test, including the real Python and Node servers
-        run: ./scripts/test.ps1 -c Release --logger "console;verbosity=normal"
+        run: ./scripts/test.ps1 -c Release --logger "console;verbosity=normal" --blame-crash --results-directory TestResults
+
+      - name: Show why the tests crashed
+        if: failure()
+        run: |
+          Get-ChildItem TestResults -Recurse -Filter 'Sequence_*.xml' -ErrorAction SilentlyContinue | ForEach-Object { "---- $($_.Name)"; Get-Content $_ }
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-30) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error' } |
+            Select-Object -First 6 | ForEach-Object { "---- $($_.TimeCreated) $($_.ProviderName)"; $_.Message }
 
       - name: Build x64 and Arm64
         run: ./scripts/build.ps1
