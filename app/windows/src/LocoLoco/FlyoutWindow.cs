@@ -216,11 +216,21 @@ sealed partial class Flyout
         // Onto the right monitor first, so the client size uses its scale.
         if (!Visible) appWindow.Move(new PointInt32(work.Right - margin - w, work.Bottom - margin - h));
         appWindow.ResizeClient(new SizeInt32(w, h));
-        var outer = appWindow.Size;
-        var (x, y, edge) = Spot(icon, bar, work, margin, outer.Width, outer.Height);
-        appWindow.Move(new PointInt32(x, y));
+        // ResizeClient leaves room for a title bar this window doesn't have, and the window has an
+        // invisible resize border. So size and place the client area, the part people see.
+        var outer = Native.WindowRect(Hwnd);
+        var client = Native.ClientRect(Hwnd);
+        if (client.Width > 0 && (client.Width != w || client.Height != h))
+        {
+            appWindow.Resize(new SizeInt32(outer.Width + w - client.Width, outer.Height + h - client.Height));
+            outer = Native.WindowRect(Hwnd);
+            client = Native.ClientRect(Hwnd);
+        }
+        if (client.Width <= 0) client = outer;
+        var (x, y, edge) = Spot(icon, bar, work, margin, client.Width, client.Height);
+        appWindow.Move(new PointInt32(x - (client.Left - outer.Left), y - (client.Top - outer.Top)));
         slideFrom = edge switch { Edge.Top => -16, _ => 16 };
-        Placement = $"icon {icon?.ToString() ?? "none"}, taskbar {bar?.Edge.ToString() ?? "none"}, work {work}, scale {scale}, window {x},{y} {outer.Width}x{outer.Height}";
+        Placement = $"icon {icon?.ToString() ?? "none"}, taskbar {bar?.Edge.ToString() ?? "none"}, work {work}, scale {scale}, window {x},{y} {client.Width}x{client.Height}";
     }
 
     static (int X, int Y, Edge Edge) Spot(RECT? icon, (RECT Rect, Edge Edge)? bar, RECT work, int m, int w, int h)

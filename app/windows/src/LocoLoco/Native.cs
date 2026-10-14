@@ -73,6 +73,8 @@ static partial class Native
     [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int dwProcessId);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] static extern bool GetWindowRect(nint hWnd, out RECT r);
+    [DllImport("user32.dll")] static extern bool GetClientRect(nint hWnd, out RECT r);
+    [DllImport("user32.dll")] static extern bool ClientToScreen(nint hWnd, ref POINT p);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern nint FindWindowW(string? cls, string? name);
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(nint hWnd);
     [DllImport("user32.dll")] static extern int GetSystemMetricsForDpi(int index, uint dpi);
@@ -99,6 +101,15 @@ static partial class Native
     public static POINT Cursor() => GetCursorPos(out var p) ? p : default;
 
     public static RECT WindowRect(nint hwnd) => GetWindowRect(hwnd, out var r) ? r : default;
+
+    /// <summary>The client area on screen. With no title bar, it's the part of the window people see.</summary>
+    public static RECT ClientRect(nint hwnd)
+    {
+        if (!GetClientRect(hwnd, out var r)) return default;
+        var p = new POINT();
+        ClientToScreen(hwnd, ref p);
+        return new RECT { Left = p.X, Top = p.Y, Right = p.X + r.Width, Bottom = p.Y + r.Height };
+    }
 
     /// <summary>The tray icon's place on screen. Null when Windows can't say.</summary>
     public static RECT? IconRect(nint hwnd, Guid id)

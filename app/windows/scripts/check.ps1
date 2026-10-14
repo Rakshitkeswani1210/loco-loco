@@ -91,6 +91,8 @@ try {
         }
     }
 
+    # A plain desktop behind the screenshots, not whatever windows are open.
+    try { (New-Object -ComObject Shell.Application).MinimizeAll(); Start-Sleep -Seconds 1 } catch { }
     $code = Run $Exe @('--screenshot', $Out, '--only', ($ports -join ','), '--data', $data)
     foreach ($f in 'log.txt', 'error.txt') {
         $path = Join-Path $Out $f
