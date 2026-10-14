@@ -303,9 +303,14 @@ static class EmptyState
             Height = Metrics.Empty, Padding = new Thickness(0, 16, 0, 18), Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
+        // Both sizes, from the drawing's own shape: in a StackPanel a stretched shape gets no width and draws nothing.
+        var data = Geometry();
+        var bounds = data.Bounds;
+        const double height = 34;
         var path = new Microsoft.UI.Xaml.Shapes.Path
         {
-            Data = Geometry(), Stretch = Stretch.Uniform, Height = 34,
+            Data = data, Stretch = Stretch.Uniform, Height = height,
+            Width = bounds.Height > 0 ? Math.Ceiling(height * bounds.Width / bounds.Height) : height,
             Stroke = p.Tertiary, StrokeThickness = 1.5,
             StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round,
             HorizontalAlignment = HorizontalAlignment.Center,
