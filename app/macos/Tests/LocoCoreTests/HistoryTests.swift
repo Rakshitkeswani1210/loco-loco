@@ -75,6 +75,24 @@ private func server(
     #expect(h.entries.count == 2)
   }
 
+  @Test func removeStoppedRemovesOnlyThatStoppedEntry() {
+    let running = HistoryEntry(server: server(root: 80, port: 8094, command: "a"), now: t0)
+    var keep = HistoryEntry(server: server(root: 81, port: 4193, command: "b"), now: t0)
+    keep.stoppedAt = t0 + 1
+    var gone = HistoryEntry(server: server(root: 82, port: 5173, command: "c"), now: t0)
+    gone.stoppedAt = t0 + 2
+    var h = History(entries: [running, keep, gone])
+
+    let removed = h.removeStopped(gone.id)
+    #expect(removed)
+    #expect(Set(h.entries.map(\.id)) == [running.id, keep.id])
+    let removedRunning = h.removeStopped(running.id)
+    #expect(!removedRunning)
+    let removedAgain = h.removeStopped(gone.id)
+    #expect(!removedAgain)
+    #expect(h.entries.count == 2)
+  }
+
   @Test func pruneKeepsTheNewestUpToTheLimit() {
     var entries: [HistoryEntry] = []
     for i in 0..<5 {

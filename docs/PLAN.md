@@ -44,10 +44,10 @@ What changed from Iteration 1:
 | 8 | Running again, with the new start time. |
 | 9 | Didn't start: the row goes back to Stopped, and the reason takes the place of the time, in red. |
 | 10 | Hover it: Show log and Restart. |
-| 11 | Right-click: Open in browser, Copy URL, Restart, Stop, Show in Finder, Open in Terminal, Open in Cursor, Show log. |
+| 11 | Right-click: Open in browser, Copy URL, Restart, Stop, Show in Finder, Open in Terminal, Open in Cursor, Show log. A stopped server also gets Remove from history, last, after a separator. |
 | 12 | Still running after 5 seconds: Force stop. |
 | 13 | After Stop all: "Nothing running". Stopped shows the 5 latest, and the rest sit under More. |
-| 14 | The ··· menu: Stop all…, Launch at login, Show count in menu bar, Show app and macOS servers, Group by project, Keep history (10, 20 or 50 servers), Clear history…, Quit Loco Loco. |
+| 14 | The ··· menu: Stop all…, Launch at login, Show count in menu bar, Show app and macOS servers, Group by project, Keyboard shortcut… (with the current keys on the right), Keep history (10, 20 or 50 servers), Clear history…, Quit Loco Loco. |
 | 15 | Dark appearance. |
 
 **Rules every frame follows**
@@ -87,8 +87,15 @@ Each row shows which project it belongs to, so he knows where to look. Approved 
 - The row shows a spinner until the port opens. If the process quits first, or 60 seconds pass, the row shows why ("Exited with code 1", "Port in use", "Timed out") and offers Show log and Restart.
 - Restarted servers keep running when you quit Loco Loco.
 - History keeps 20 servers ("Keep history" in the ··· menu: 10, 20 or 50), saved in `~/Library/Application Support/Loco Loco/history.json`. Stopped shows the 5 latest. The rest sit under "More", collapsed, the way Notion's sidebar collapses its pages. More shows only when it hides 2 or more servers; with 6 stopped, all 6 show, because a More row would take the sixth row's place. More opens in place: the panel grows to the height of the screen, then scrolls. "Clear history…" asks once.
+- Remove from history, in a stopped server's context menu or with ⌘⌫, forgets that one server without asking, so short-lived runs like test suites can go without clearing the rest. Its log stays, as with Clear history. With ⌘⌫ the highlight moves to the next stopped row, and never to a running one, so pressing it again can't stop a server.
 - Open in Terminal opens a Terminal window in the server's folder. Open in Cursor opens the folder in Cursor, and only shows when Cursor is installed.
 - Limit: a server started with extra environment variables (from an IDE run profile, say) may need them. Restart uses the folder, the command and PATH. If that fails, the log says why.
+
+**Keyboard shortcut**
+- ⌃⌥L, from any app, opens the panel in the middle of the screen with the pointer, clear of the menu bar and the Dock. Pressed again, it closes. While the panel is open its top edge stays put, so rows don't jump; it moves up only when the panel grows past the bottom. The menu bar icon isn't highlighted, since the panel doesn't hang from it.
+- Keyboard shortcut… in the ··· menu opens a standard alert with a field that records the keys. Delete means none, Return saves and Esc cancels. The current shortcut is off while the alert is up, so pressing it records it again. The ··· menu shows the shortcut on the right, the way macOS shows any other.
+- A shortcut needs ⌃, ⌥ or ⌘ (F1 to F20 can stand alone), so it can't fire while you type. Keys that macOS already uses, such as ⌘Space for Spotlight, are refused with a pointer to System Settings, and the recorder opens again. Other apps' shortcuts can't be seen, so a clash with one isn't caught.
+- Uses Carbon's `RegisterEventHotKey`, which needs no Accessibility permission. Saved as `shortcut` in the app's defaults; an empty value means none.
 
 ## Apple HIG, applied
 
@@ -97,10 +104,10 @@ Each row shows which project it belongs to, so he knows where to look. Approved 
 - Menus, as measured on this Mac (macOS 26): 5pt padding, 24pt rows, 11pt separators, 8pt highlight corners. The context menu is 158pt wide, the ··· menu 269pt.
 - Text: SF Pro 13pt in rows, 12pt in headers (the group name semibold, the count regular). AppKit label colours. The secondary colour is a little darker than the system's so it passes 4.5:1 on white, and the failure reason uses the darker system red (#d70015, #ff453a in dark) for the same reason.
 - Sentence case everywhere ("Open in browser", "Force stop", "Stop all…"). The HIG asks for title case in menus and buttons; this follows Notion and Linear.
-- SF Symbols for everything except the octopus (see Brand): `stop.fill`, `arrow.clockwise`, `doc.text`, `ellipsis`, `globe`, `link`, `folder`, `terminal`, `chevron.left.forwardslash.chevron.right` (Cursor), `checkmark`, `chevron.right`.
-- One symbol and one name per action, in the rows and the context menu: `stop.fill` for Stop, `arrow.clockwise` for Restart (also on a server that didn't start), `doc.text` for Show log. Row buttons are plain glyphs that darken under the pointer, with a help tag. Stop is 11.75pt and the others 11pt, so the ink matches the mockup, and every row button is 21.5pt wide, so the icons line up from row to row.
-- Keyboard: arrow keys move through rows, Return opens, ⌘⌫ stops, ⌘R restarts, ⌘, opens the ··· menu, ⌘Q quits, Esc closes.
-- VoiceOver reads each row as "ops-validation-api, port 8000, running since 11:09 AM", with Stop and Restart as actions.
+- SF Symbols for everything except the octopus (see Brand): `stop.fill`, `arrow.clockwise`, `doc.text`, `trash`, `ellipsis`, `globe`, `link`, `folder`, `terminal`, `chevron.left.forwardslash.chevron.right` (Cursor), `checkmark`, `chevron.right`.
+- One symbol and one name per action, in the rows and the context menu: `stop.fill` for Stop, `arrow.clockwise` for Restart (also on a server that didn't start), `doc.text` for Show log, `trash` for Remove from history (context menu only). Row buttons are plain glyphs that darken under the pointer, with a help tag. Stop is 11.75pt and the others 11pt, so the ink matches the mockup, and every row button is 21.5pt wide, so the icons line up from row to row.
+- Keyboard: ⌃⌥L opens the panel from any app (it can be changed or turned off). In the panel, arrow keys move through rows, Return opens, ⌘⌫ stops a running server and removes a stopped one from history, ⌘R restarts, ⌘, opens the ··· menu, ⌘Q quits, Esc closes.
+- VoiceOver reads each row as "ops-validation-api, port 8000, running since 11:09 AM", with Stop and Restart as actions, and Remove from history on stopped rows.
 - Light, dark, Increase Contrast, Reduce Motion and accent colour all come from the system.
 - No Dock icon. Launch at login uses the system's login items, so it shows up in System Settings like any other app.
 
@@ -150,6 +157,10 @@ Also checked: Force stop after 5 seconds, Stop all… and Clear history… (both
 Projects (Oct 14), checked the same way with test servers in a fake home folder, one process per server: labels in light and dark, labels holding still under hover, Stopped rows, grouping in light and dark with the right panel height, the grey Other group, Rename project… (typed name, tint kept, restart lands back in the renamed group), two folders renamed into one group and back, arrow keys skipping headers, and `loco-scan project` against the real Documents folder (worktrees, nested repos and loose folders). 19 unit tests pass.
 
 Fixed on the way: in a full-screen space the menu bar hides once the pointer leaves it, and the open panel used to follow it up by about 62pt, off the top of the screen. The panel now keeps the top it opened at, and never sits higher than a menu bar below the top of the screen. Checked in a normal space (no change in position); the full-screen case was not run, so no space was taken over while he worked.
+
+Remove from history, checked on Oct 13 with `python3 -m http.server` test servers and a `--test-hooks` build: from the context menu, the row leaves Stopped and `history.json`; with ⌘⌫, the highlight moves to the next stopped row, clears when none are left, and a further ⌘⌫ leaves the running server alone; ⌘⌫ on a running row still stops it.
+
+The keyboard shortcut, checked on Oct 13 the same way: the panel opens centred on the pointer's screen to the point, without the menu bar highlight; the recorder alert takes focus, shows held modifiers, records ⌃⌥⇧K and saves it with Return, and the ··· menu then shows it; Delete sets none, Esc and Return reach Cancel and Save, an F-key alone records; ⌘Space and ⇧⌘3 read as taken by macOS and ⌃⌥L doesn't; a hot key event reaches the handler. Not run: pressing the real keys from another app, so no keystrokes went to the apps you were using.
 
 The octopus, checked the same way: the menu bar glyph awake and asleep (3pt to the count, as on the board), the empty state in light and dark with and without history, row icon sizes against the mockup, both alerts with the new icon, and the Finder icon on macOS 26.
 

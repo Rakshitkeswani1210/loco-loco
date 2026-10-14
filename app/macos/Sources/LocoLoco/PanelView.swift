@@ -225,6 +225,7 @@ struct RowView: View {
       if row.canRestart { Button("Restart") { model.perform(.action(row.id, .restart)) } }
       if row.state == .force { Button("Force stop") { model.perform(.action(row.id, .force)) } }
       if row.hasLog { Button("Show log") { model.perform(.action(row.id, .log)) } }
+      if row.canRemove { Button(RowAction.remove.title) { model.perform(.action(row.id, .remove)) } }
       Button("Show menu") { model.perform(.menu(row.id, nil)) }
     }
   }

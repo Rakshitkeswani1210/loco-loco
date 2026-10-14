@@ -47,9 +47,12 @@ final class AppController: NSObject, NSWindowDelegate {
   let panel = PanelWindow()
   private let hosting: NSHostingView<PanelRoot>
   let input: InputView
+  let hotKey = HotKey()
   private var monitor: Any?
+  /// The screen the shortcut opened the panel in the middle of. Nil when it hangs from the menu bar icon.
+  private var centeredOn: NSScreen?
   private var closedAt = Date.distantPast
-  private var closing = false
+  private(set) var closing = false
   /// The panel's top edge while it's open. In a full-screen space the menu bar hides once the pointer leaves it,
   /// so the panel keeps the place it opened at instead of following the bar off the screen.
   private var pinnedTop: CGFloat?
@@ -88,6 +91,8 @@ final class AppController: NSObject, NSWindowDelegate {
 
     model.perform = { [weak self] in self?.handle($0) }
     model.onFrames = { [weak self] in self?.input.updateToolTips() }
+    hotKey.onPress = { [weak self] in self?.toggleCentered() }
+    hotKey.register(model.shortcut)
     update()
     observe()
   }
@@ -120,10 +125,20 @@ final class AppController: NSObject, NSWindowDelegate {
 
   @objc func toggle() {
     if panel.isVisible && !closing { close() }
-    else if !closing, Date().timeIntervalSince(closedAt) > 0.3 { open() }
+    else if !closing, Date().timeIntervalSince(closedAt) > 0.3 { open(centeredOn: nil) }
   }
 
-  private func open() {
+  /// The keyboard shortcut: opens the panel in the middle of the screen with the pointer, or closes it.
+  func toggleCentered() {
+    if panel.isVisible && !closing { close() }
+    else if !closing {
+      let mouse = NSEvent.mouseLocation
+      open(centeredOn: NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main)
+    }
+  }
+
+  private func open(centeredOn screen: NSScreen?) {
+    centeredOn = screen
     model.resetPointer()
     model.isOpen = true
     pinnedTop = nil
@@ -131,7 +146,9 @@ final class AppController: NSObject, NSWindowDelegate {
     panel.alphaValue = 1
     panel.makeKeyAndOrderFront(nil)
     panel.makeFirstResponder(input)
-    DispatchQueue.main.async { [weak self] in self?.statusItem.button?.highlight(true) }
+    if screen == nil {
+      DispatchQueue.main.async { [weak self] in self?.statusItem.button?.highlight(true) }
+    }
     monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
       MainActor.assumeIsolated {
         // The clicked app takes focus itself.
@@ -170,10 +187,8 @@ final class AppController: NSObject, NSWindowDelegate {
 
   func windowDidResignKey(_ notification: Notification) { close() }
 
-  /// Pins the panel under the status item and sizes it to its rows, up to the bottom of the screen.
+  /// Sizes the panel to its rows, under the status item or in the middle of the screen, and scrolls what doesn't fit.
   private func layout() {
-    guard let button = statusItem.button, let barWindow = button.window,
-          let screen = barWindow.screen ?? NSScreen.main else { return }
     let rows = model.rows
     var height = Metrics.padding * 2 + Metrics.rowHeight * CGFloat(1 + rows.running.count)
     if rows.running.isEmpty { height += Metrics.emptyHeight }
@@ -183,23 +198,48 @@ final class AppController: NSObject, NSWindowDelegate {
     if rows.stoppedTotal > 0 {
       height += Metrics.groupGap + Metrics.rowHeight * CGFloat(1 + rows.stopped.count + (rows.hasMore ? 1 : 0))
     }
-    // A hidden menu bar sits above the screen, so the top never goes higher than a menu bar's height below it.
-    let top = pinnedTop ?? min(barWindow.frame.minY, screen.frame.maxY - NSStatusBar.system.thickness) - Metrics.gapBelowMenuBar
-    pinnedTop = top
-    let maxHeight = top - screen.visibleFrame.minY - Metrics.gapBelowMenuBar
-    let scrolls = height > maxHeight
+    let place: (x: CGFloat, top: CGFloat, maxHeight: CGFloat)
+    if let screen = centeredOn {
+      place = centered(height, on: screen)
+    } else if let below = belowStatusItem() {
+      place = below
+    } else {
+      return
+    }
+    let scrolls = height > place.maxHeight
     if model.scrolls != scrolls { model.scrolls = scrolls }
-    height = min(height, maxHeight)
+    height = min(height, place.maxHeight)
 
-    let buttonRect = barWindow.convertToScreen(button.convert(button.bounds, to: nil))
-    var x = min(buttonRect.minX, screen.frame.maxX - Metrics.screenInset - Metrics.width)
-    x = max(x, screen.frame.minX + Metrics.screenInset)
     let m = Metrics.margin
-    let frame = NSRect(x: x - m, y: top - height - m, width: Metrics.width + 2 * m, height: height + 2 * m).integral
+    let frame = NSRect(x: place.x - m, y: place.top - height - m, width: Metrics.width + 2 * m, height: height + 2 * m).integral
     guard panel.frame != frame else { return }
     panel.setFrame(frame, display: true)
     panel.invalidateShadow()
     DispatchQueue.main.async { [weak self] in self?.panel.invalidateShadow() }
+  }
+
+  /// Pinned under the status item, down to the bottom of the screen.
+  private func belowStatusItem() -> (x: CGFloat, top: CGFloat, maxHeight: CGFloat)? {
+    guard let button = statusItem.button, let barWindow = button.window,
+          let screen = barWindow.screen ?? NSScreen.main else { return nil }
+    // A hidden menu bar sits above the screen, so the top never goes higher than a menu bar's height below it.
+    let top = pinnedTop ?? min(barWindow.frame.minY, screen.frame.maxY - NSStatusBar.system.thickness) - Metrics.gapBelowMenuBar
+    pinnedTop = top
+    let maxHeight = top - screen.visibleFrame.minY - Metrics.gapBelowMenuBar
+    let buttonRect = barWindow.convertToScreen(button.convert(button.bounds, to: nil))
+    var x = min(buttonRect.minX, screen.frame.maxX - Metrics.screenInset - Metrics.width)
+    x = max(x, screen.frame.minX + Metrics.screenInset)
+    return (x, top, maxHeight)
+  }
+
+  /// In the middle of the screen, clear of the menu bar and Dock. Once open, the top stays put so rows don't jump,
+  /// and moves up only when the panel grows past the bottom.
+  private func centered(_ height: CGFloat, on screen: NSScreen) -> (x: CGFloat, top: CGFloat, maxHeight: CGFloat) {
+    let area = screen.visibleFrame.insetBy(dx: Metrics.screenInset, dy: Metrics.screenInset)
+    let fit = min(height, area.height)
+    var top = panel.isVisible ? panel.frame.maxY - Metrics.margin : (area.midY + fit / 2).rounded()
+    top = min(area.maxY, max(top, area.minY + fit))
+    return ((area.midX - Metrics.width / 2).rounded(), top, area.height)
   }
 
   // MARK: Commands
@@ -237,6 +277,7 @@ final class AppController: NSObject, NSWindowDelegate {
     case .restart: model.restart(row)
     case .force: if let e = row.entryID { model.forceStop(e) }
     case .log: showLog(row)
+    case .remove: if row.canRemove, let e = row.entryID { model.remove(e) }
     }
   }
 
@@ -302,6 +343,12 @@ final class AppController: NSObject, NSWindowDelegate {
         self?.renameProject(root: root, name: project.name)
       })
     }
+    if row.canRemove, let e = row.entryID {
+      menu.addItem(.separator())
+      menu.addItem(ActionItem(RowAction.remove.title, symbol: RowAction.remove.symbol) { [weak self] in
+        self?.model.remove(e)
+      })
+    }
 
     let at: CGPoint
     if let point { at = point }
@@ -349,6 +396,12 @@ final class AppController: NSObject, NSWindowDelegate {
     }
     group.state = model.groupByProject ? .on : .off
     menu.addItem(group)
+    let shortcut = ActionItem("Keyboard shortcut…") { [weak self] in self?.editShortcut() }
+    if hotKey.isRegistered, let s = model.shortcut, let key = s.menuKey {
+      shortcut.keyEquivalent = key
+      shortcut.keyEquivalentModifierMask = s.modifiers.flags
+    }
+    menu.addItem(shortcut)
     menu.addItem(.separator())
     let keep = NSMenuItem(title: "Keep history", action: nil, keyEquivalent: "")
     let limits = NSMenu()
@@ -416,13 +469,42 @@ final class AppController: NSObject, NSWindowDelegate {
     }
   }
 
+  /// Records new keys for the shortcut. The current one is off meanwhile, so pressing it records it again.
+  private func editShortcut() {
+    hotKey.unregister()
+    var shown = model.shortcut
+    while let choice = recordShortcut(shown) {
+      shown = choice
+      if let s = choice, s != model.shortcut, s.isTakenBySystem {
+        _ = alert("macOS already uses \(s.title)", info: "Try other keys, or turn that shortcut off in System Settings > Keyboard > Keyboard Shortcuts.", action: nil)
+      } else if hotKey.register(choice) {
+        model.setShortcut(choice)
+        return
+      } else {
+        _ = alert("Couldn't use \(choice?.title ?? "those keys")", info: "Try other keys.", action: nil)
+      }
+    }
+    hotKey.register(model.shortcut)
+  }
+
+  /// Nil when cancelled. Otherwise the keys chosen, which are nil for none.
+  private func recordShortcut(_ shortcut: Shortcut?) -> Shortcut?? {
+    let field = ShortcutField(shortcut: shortcut)
+    let a = NSAlert()
+    a.messageText = "Keyboard shortcut"
+    a.informativeText = "Opens Loco Loco in the middle of the screen, from any app. Press the keys you want, or Delete for none."
+    a.addButton(withTitle: "Save")
+    a.addButton(withTitle: "Cancel")
+    a.accessoryView = field
+    field.onReturn = { [weak a] in a?.buttons.first?.performClick(nil) }
+    field.onEscape = { [weak a] in a?.buttons.last?.performClick(nil) }
+    a.layout()
+    a.window.initialFirstResponder = field
+    return runAlert(a) == .alertFirstButtonReturn ? .some(field.shortcut) : nil
+  }
+
   /// Shows an alert above the open panel. Returns true when the action button is chosen.
   private func alert(_ title: String, info: String?, action: String?, destructive: Bool = true, field: NSTextField? = nil) -> Bool {
-    holdOpen += 1
-    defer { holdOpen -= 1 }
-    panel.level = .floating
-    if !NSApp.isActive, let front = NSWorkspace.shared.frontmostApplication, front != .current { returnFocusTo = front }
-    NSApp.activate()
     let a = NSAlert()
     a.messageText = title
     if let info { a.informativeText = info }
@@ -435,9 +517,19 @@ final class AppController: NSObject, NSWindowDelegate {
       a.layout()
       a.window.initialFirstResponder = field
     }
+    return runAlert(a) == .alertFirstButtonReturn && action != nil
+  }
+
+  /// Runs an alert above the open panel, which stays open behind it, and gives focus back to the panel after.
+  private func runAlert(_ a: NSAlert) -> NSApplication.ModalResponse {
+    holdOpen += 1
+    defer { holdOpen -= 1 }
+    panel.level = .floating
+    if !NSApp.isActive, let front = NSWorkspace.shared.frontmostApplication, front != .current { returnFocusTo = front }
+    NSApp.activate()
     let response = a.runModal()
     panel.level = .popUpMenu
     if panel.isVisible { panel.makeKeyAndOrderFront(nil) }
-    return action != nil && response == .alertFirstButtonReturn
+    return response
   }
 }

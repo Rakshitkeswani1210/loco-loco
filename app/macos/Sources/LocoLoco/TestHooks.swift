@@ -1,5 +1,7 @@
 #if TEST_HOOKS
 import AppKit
+import Carbon.HIToolbox
+import LocoCore
 
 /// Drives the panel from the command line for screenshots and checks. Compiled in only by `scripts/build.sh --test-hooks`.
 /// Commands arrive as distributed notifications named `com.rakshit.locoloco.test` whose object is the command,
@@ -17,6 +19,9 @@ final class TestHooks {
   private var alertAnswer: NSApplication.ModalResponse?
   /// Typed into the next alert's text field as soon as it opens.
   private var alertText: String?
+  /// Commands to run once an alert is up, one every half second, since notifications may wait until it closes.
+  private var modalQueue: [String] = []
+  private var fieldCalls: [String] = []
   /// The next menu that opens chooses the first item whose title starts with this, after a moment for a screenshot.
   private var pick: String?
   /// Focus, activation and outside clicks, newest last, so a panel that closes by itself can be explained.
@@ -35,6 +40,8 @@ final class TestHooks {
       nonisolated(unsafe) let menu = n.object as? NSMenu
       MainActor.assumeIsolated {
         guard let self, let menu else { return }
+        let keys = menu.items.filter { !$0.keyEquivalent.isEmpty }.map { "\($0.title)=\($0.keyEquivalentModifierMask.rawValue):\($0.keyEquivalent)" }
+        self.note("menu keys " + keys.joined(separator: ", "))
         if let pick = self.pick, let index = menu.items.firstIndex(where: { $0.title.hasPrefix(pick) }) {
           self.pick = nil
           self.after(0.8) {
@@ -50,6 +57,10 @@ final class TestHooks {
     let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated {
         guard let self, let window = NSApp.modalWindow else { return }
+        if !self.modalQueue.isEmpty {
+          self.run(self.modalQueue.removeFirst())
+          return
+        }
         if let text = self.alertText, let field = Self.textField(in: window.contentView) {
           self.alertText = nil
           field.stringValue = text
@@ -102,6 +113,12 @@ final class TestHooks {
     let a = command.split(separator: " ").map(String.init)
     switch a.first ?? "" {
     case "toggle": controller.toggle()
+    case "shortcut": controller.toggleCentered()
+    case "modal" where a.count >= 2: modalQueue.append(a.dropFirst().joined(separator: " "))
+    case "modalKey" where a.count >= 2: modalKey(a)
+    case "modalFlags": modalFlags(a)
+    case "modalShot" where a.count == 2: modalShot(a[1])
+    case "offscreen" where a.count == 2: offscreen(a[1])
     case "move" where a.count == 3: move(to: CGPoint(x: Double(a[1]) ?? 0, y: Double(a[2]) ?? 0))
     case "row" where a.count >= 2: if let r = rowFrame(port: a[1], group: a.count > 2 ? a[2] : nil) { move(to: CGPoint(x: r.midX, y: r.midY)) }
     case "more": if let r = model.frames["row:more"] { move(to: CGPoint(x: r.midX, y: r.midY)) }
@@ -139,6 +156,90 @@ final class TestHooks {
     guard let button = controller.statusItem.button,
           let rep = button.bitmapImageRepForCachingDisplay(in: button.bounds) else { return }
     button.cacheDisplay(in: button.bounds, to: rep)
+    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+  }
+
+  private func flags(_ a: [String]) -> NSEvent.ModifierFlags {
+    var f: NSEvent.ModifierFlags = []
+    if a.contains("ctrl") { f.insert(.control) }
+    if a.contains("opt") { f.insert(.option) }
+    if a.contains("shift") { f.insert(.shift) }
+    if a.contains("cmd") { f.insert(.command) }
+    return f
+  }
+
+  /// `modalKey 37 ctrl opt chars=l`: a key press in the alert, through the app the way a real one arrives.
+  private func modalKey(_ a: [String]) {
+    guard let window = NSApp.modalWindow else { return }
+    let chars = a.first { $0.hasPrefix("chars=") }.map { String($0.dropFirst(6)) } ?? ""
+    let e = NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: flags(a), timestamp: ProcessInfo.processInfo.systemUptime,
+      windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+      isARepeat: false, keyCode: UInt16(a[1]) ?? 0)!
+    NSApp.sendEvent(e)
+  }
+
+  /// `modalFlags ctrl opt`: modifiers held down in the alert, or none.
+  private func modalFlags(_ a: [String]) {
+    guard let window = NSApp.modalWindow, let cg = CGEvent(keyboardEventSource: nil, virtualKey: 59, keyDown: true) else { return }
+    cg.type = .flagsChanged
+    cg.flags = CGEventFlags(rawValue: UInt64(flags(a).rawValue))
+    guard let e = NSEvent(cgEvent: cg) else { return }
+    window.firstResponder?.flagsChanged(with: e)
+  }
+
+  /// Checks the shortcut pieces without showing anything or taking focus: the recorder's keys, which keys macOS
+  /// already uses, and that a hot key event reaches the handler.
+  private func offscreen(_ path: String) {
+    var results: [String: Any] = [:]
+    func type(_ name: String, from start: Shortcut?, _ code: UInt16, _ flags: NSEvent.ModifierFlags = [], _ chars: String = "") {
+      let field = ShortcutField(shortcut: start)
+      fieldCalls = []
+      field.onReturn = { [weak self] in self?.fieldCalls.append("return") }
+      field.onEscape = { [weak self] in self?.fieldCalls.append("escape") }
+      let e = NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+        characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+      field.keyDown(with: e)
+      results[name] = [field.shortcut?.storage ?? "none", fieldCalls.joined(separator: ","), field.accessibilityValue() as? String ?? ""]
+    }
+    type("record", from: .standard, 40, [.control, .option, .shift], "k")
+    type("delete", from: .standard, 51, [], "\u{8}")
+    type("forwardDelete", from: .standard, 117)
+    type("escape", from: .standard, 53, [], "\u{1B}")
+    type("return", from: .standard, 36, [], "\r")
+    type("enter", from: .standard, 76, [], "\u{3}")
+    type("commandDelete", from: .standard, 51, [.command], "\u{8}")
+    type("f5", from: nil, 96)
+    type("none", from: nil, 53, [], "\u{1B}")
+
+    for storage in ["49:8", "20:12", "37:3", "46:12"] {
+      results["taken " + storage] = Shortcut(storage: storage)?.isTakenBySystem ?? false
+    }
+
+    let hotKey = controller.hotKey
+    let saved = hotKey.onPress
+    var fired = 0
+    hotKey.onPress = { fired += 1 }
+    var event: EventRef?
+    CreateEvent(nil, OSType(kEventClassKeyboard), UInt32(kEventHotKeyPressed), 0, EventAttributes(kEventAttributeNone), &event)
+    var id = EventHotKeyID(signature: OSType(0x4C6F_636F), id: 1)
+    SetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), MemoryLayout<EventHotKeyID>.size, &id)
+    let status = SendEventToEventTarget(event, GetApplicationEventTarget())
+    if let event { ReleaseEvent(event) }
+    hotKey.onPress = saved
+    results["carbon"] = ["status": Int(status), "fired": fired, "registered": hotKey.isRegistered]
+
+    if let data = try? JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys]) {
+      try? data.write(to: URL(fileURLWithPath: path))
+    }
+  }
+
+  /// Renders the alert as AppKit draws it, since this build can't record the screen.
+  private func modalShot(_ path: String) {
+    guard let view = NSApp.modalWindow?.contentView?.superview ?? NSApp.modalWindow?.contentView,
+          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+    view.cacheDisplay(in: view.bounds, to: rep)
     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
   }
 
@@ -191,9 +292,21 @@ final class TestHooks {
        "project": r.project?.name ?? "", "tint": r.project?.tint ?? -1]
     }
     let f = panel.frame
+    let mouse = NSEvent.mouseLocation
+    let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    let modal = NSApp.modalWindow
     let state: [String: Any] = [
       "visible": panel.isVisible, "key": panel.isKeyWindow, "frame": [f.minX, f.minY, f.width, f.height],
       "statusTitle": controller.statusItem.button?.title ?? "",
+      "statusHighlighted": controller.statusItem.button?.isHighlighted ?? false,
+      "screen": screen.map { [$0.visibleFrame.minX, $0.visibleFrame.minY, $0.visibleFrame.width, $0.visibleFrame.height] } ?? [],
+      "shortcut": UserDefaults.standard.string(forKey: "shortcut") ?? "(default)",
+      "shortcutTitle": model.shortcut?.title ?? "", "hotKeyRegistered": controller.hotKey.isRegistered,
+      "takenBySystem": model.shortcut?.isTakenBySystem ?? false,
+      "modal": modal != nil, "modalKey": modal?.isKeyWindow ?? false, "closing": controller.closing, "holdOpen": controller.holdOpen,
+      "active": NSApp.isActive, "alpha": panel.alphaValue,
+      "modalFirstResponder": modal?.firstResponder.map { String(describing: type(of: $0)) } ?? "",
+      "modalField": (modal?.firstResponder as? NSView)?.accessibilityValue() as? String ?? "",
       "running": rows.running.map(json), "stopped": rows.stopped.map(json), "stoppedTotal": rows.stoppedTotal,
       "groups": (rows.groups ?? []).map { ["name": $0.tag.name, "tint": $0.tag.tint ?? -1, "ports": $0.rows.map { Int($0.port) }] },
       "highlight": model.highlight ?? "", "hot": model.hot ?? "", "stale": model.staleUnderPointer,
