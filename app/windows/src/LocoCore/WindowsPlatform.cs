@@ -4,9 +4,12 @@ using System.Runtime.Versioning;
 namespace LocoCore;
 
 /// <summary>The real system, for the app and loco-scan.</summary>
+/// <param name="helper">The program that sends Ctrl+C for Stop (see <see cref="Stopper.Ask"/>). By default this program, run again.</param>
 [SupportedOSPlatform("windows")]
-public sealed class WindowsPlatform : IPlatform
+public sealed class WindowsPlatform(string? helper = null) : IPlatform
 {
+    readonly string helper = helper ?? Environment.ProcessPath ?? throw new InvalidOperationException("No program path for the Ctrl+C helper.");
+
     public Places Places { get; } = DefaultPlaces();
 
     public static Places DefaultPlaces()
@@ -44,7 +47,8 @@ public sealed class WindowsPlatform : IPlatform
     public List<Server> Scan() => Scanner.Build(new WinProcTable(), Places, Exists, AppName);
     public ProcRef[] Tree(ProcRef root) => Scanner.Tree(new WinProcTable(listeners: false), root);
     public bool Alive(ProcRef p) => Win32.IsAlive(p);
-    public void Interrupt(ProcRef[] procs) => Stopper.Interrupt(procs);
+    /// <summary>Doesn't wait: the engine watches the processes, and Force stop follows if they stay.</summary>
+    public void Interrupt(ProcRef[] procs) => Stopper.Ask(helper, procs)?.Dispose();
     public void Kill(ProcRef[] procs) => Stopper.Kill(procs);
     public void KillTree(int pid) => Stopper.KillTree(pid);
     public bool PortInUse(ushort port) => WinLauncher.PortInUse(port);

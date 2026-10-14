@@ -90,13 +90,9 @@ switch (args.FirstOrDefault())
         return 0;
     }
 
-    case "--ctrl-c":
-    {
+    case Stopper.HelperFlag:
         // The helper `stop` starts, hidden, so loco-scan keeps its own console while this one joins the server's.
-        if (args.Length != 2) return 2;
-        var refs = args[1].Split(',').Select(r => r.Split(':')).Select(p => new ProcRef(int.Parse(p[0]), ulong.Parse(p[1]))).ToArray();
-        return Stopper.Interrupt(refs) ? 0 : 1;
-    }
+        return args.Length == 2 ? Stopper.RunHelper(args[1]) : 2;
 
     default:
     {
@@ -126,12 +122,10 @@ void List(IEnumerable<Server> servers)
 
 static bool CtrlC(ProcRef[] procs)
 {
-    var psi = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
-    psi.ArgumentList.Add("--ctrl-c");
-    psi.ArgumentList.Add(string.Join(',', procs.Select(p => $"{p.Pid}:{p.StartMicros}")));
-    using var helper = Process.Start(psi)!;
+    using var helper = Stopper.Ask(Environment.ProcessPath!, procs);
+    if (helper == null) return false;
     helper.WaitForExit();
-    return helper.ExitCode == 0;
+    return Stopper.Asked(helper.ExitCode);
 }
 
 static int Usage(string usage)

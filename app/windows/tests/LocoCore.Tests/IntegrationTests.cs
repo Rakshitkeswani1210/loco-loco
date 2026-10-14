@@ -44,7 +44,10 @@ public sealed class IntegrationTests : IDisposable
     Engine? engine;
 
     AppPaths Paths => new(Path.Combine(root, "app"));
-    RecordingPlatform Platform => platform ??= new RecordingPlatform(new WindowsPlatform());
+    /// <summary>loco-scan sends Ctrl+C for the tests, as the app sends its own; it's copied here as a project reference.</summary>
+    static readonly string Helper = Path.Combine(AppContext.BaseDirectory, "loco-scan.exe");
+
+    RecordingPlatform Platform => platform ??= new RecordingPlatform(new WindowsPlatform(Helper));
     Engine E => engine ??= new Engine(Platform, Paths, posted.Enqueue, a => a());
 
     string Folder(string name)

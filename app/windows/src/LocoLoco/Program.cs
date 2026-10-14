@@ -52,6 +52,9 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        // Stop runs this program again, hidden, to send Ctrl+C. It does only that, before any window or tray icon.
+        if (args is [LocoCore.Stopper.HelperFlag, var refs]) return LocoCore.Stopper.RunHelper(refs);
+
         Options options;
         try { options = Options.Parse(args); }
         catch (ArgumentException e)

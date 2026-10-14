@@ -12,6 +12,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\LocoCore\LocoCore.csproj" />
+    <!-- The Ctrl+C helper for IntegrationTests. -->
+    <ProjectReference Include="..\..\src\loco-scan\loco-scan.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
