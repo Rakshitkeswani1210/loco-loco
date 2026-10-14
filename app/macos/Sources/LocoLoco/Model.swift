@@ -1,6 +1,7 @@
 import AppKit
 import LocoCore
 import Observation
+import ServiceManagement
 
 enum RowGroup: Sendable { case running, stopped }
 
@@ -126,7 +127,20 @@ enum Command {
   case action(String, RowAction)
   case menu(String, CGPoint?)
   case more
+  case settings
   case close
+}
+
+enum Appearance: String, CaseIterable {
+  case system, light, dark
+
+  var title: String {
+    switch self {
+    case .system: "System"
+    case .light: "Light"
+    case .dark: "Dark"
+    }
+  }
 }
 
 @MainActor @Observable
@@ -148,6 +162,11 @@ final class Model {
   private(set) var projectTints: [String: Int]
   /// Opens the panel in the middle of the screen from any app. Nil when turned off.
   private(set) var shortcut: Shortcut?
+  private(set) var appearance: Appearance
+  /// The panel shows what's behind it through glass instead of a solid surface.
+  private(set) var transparent: Bool
+  /// Read from macOS, which the user can change in System Settings too.
+  private(set) var launchAtLogin = false
 
   // MARK: Servers and history
 
@@ -205,7 +224,10 @@ final class Model {
 
   init() {
     let d = UserDefaults.standard
-    d.register(defaults: ["showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false, "shortcut": Shortcut.standard.storage])
+    d.register(defaults: [
+      "showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false, "shortcut": Shortcut.standard.storage,
+      "appearance": Appearance.system.rawValue, "transparent": false,
+    ])
     showCount = d.bool(forKey: "showCount")
     showAll = d.bool(forKey: "showAll")
     historyLimit = d.integer(forKey: "historyLimit")
@@ -213,6 +235,8 @@ final class Model {
     projectNames = d.dictionary(forKey: "projectNames") as? [String: String] ?? [:]
     projectTints = d.dictionary(forKey: "projectTints") as? [String: Int] ?? [:]
     shortcut = Shortcut(storage: d.string(forKey: "shortcut") ?? "")
+    appearance = Appearance(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
+    transparent = d.bool(forKey: "transparent")
     history = History(entries: History.load(), limit: d.integer(forKey: "historyLimit"))
   }
 
@@ -364,6 +388,26 @@ final class Model {
   func setShortcut(_ s: Shortcut?) {
     shortcut = s
     UserDefaults.standard.set(s?.storage ?? "", forKey: "shortcut")
+  }
+
+  func setAppearance(_ a: Appearance) {
+    appearance = a
+    UserDefaults.standard.set(a.rawValue, forKey: "appearance")
+  }
+
+  func setTransparent(_ on: Bool) {
+    transparent = on
+    UserDefaults.standard.set(on, forKey: "transparent")
+  }
+
+  func refreshLaunchAtLogin() {
+    let on = SMAppService.mainApp.status == .enabled
+    if launchAtLogin != on { launchAtLogin = on }
+  }
+
+  func setLaunchAtLogin(_ on: Bool) throws {
+    defer { refreshLaunchAtLogin() }
+    if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
   }
 
   func setHistoryLimit(_ n: Int) {

@@ -7,7 +7,7 @@ import LocoCore
 /// Commands arrive as distributed notifications named `com.rakshit.locoloco.test` whose object is the command,
 /// such as `toggle`, `row 8765`, `btn stop`, `click` or `dump /tmp/state.json`. `hold on` ignores outside clicks while you use the Mac.
 @MainActor
-final class TestHooks {
+final class TestHooks: NSObject {
   private let controller: AppController
   private var observers: [NSObjectProtocol] = []
   private var model: Model { controller.model }
@@ -27,14 +27,15 @@ final class TestHooks {
   /// Focus, activation and outside clicks, newest last, so a panel that closes by itself can be explained.
   private var events: [String] = []
   private var clickMonitor: Any?
+  private var shotTimer: Timer?
 
   init(controller: AppController) {
     self.controller = controller
-    let center = DistributedNotificationCenter.default()
-    observers.append(center.addObserver(forName: .init("com.rakshit.locoloco.test"), object: nil, queue: .main) { [weak self] n in
-      let command = n.object as? String ?? ""
-      MainActor.assumeIsolated { self?.run(command) }
-    })
+    super.init()
+    // Delivered even while another app is active, so checks don't need to take focus.
+    DistributedNotificationCenter.default().addObserver(
+      self, selector: #selector(received(_:)), name: .init("com.rakshit.locoloco.test"), object: nil,
+      suspensionBehavior: .deliverImmediately)
     observers.append(NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] n in
       // Posted on the main queue, so the menu never leaves the main thread.
       nonisolated(unsafe) let menu = n.object as? NSMenu
@@ -72,6 +73,11 @@ final class TestHooks {
     }
     RunLoop.main.add(t, forMode: .common)
     record()
+  }
+
+  @objc private func received(_ n: Notification) {
+    let command = n.object as? String ?? ""
+    MainActor.assumeIsolated { run(command) }
   }
 
   private func record() {
@@ -119,6 +125,20 @@ final class TestHooks {
     case "modalFlags": modalFlags(a)
     case "modalShot" where a.count == 2: modalShot(a[1])
     case "offscreen" where a.count == 2: offscreen(a[1])
+    case "settings": controller.openSettings()
+    case "panelShot" where a.count >= 2: panelShot(a[1], below: a.contains("below"))
+    case "autoshot" where a.count == 2: autoShot(a[1])
+    case "settingsClose": controller.settings.window?.performClose(nil)
+    case "settingsShot" where a.count == 2: settingsShot(a[1])
+    case "settingsField": if let field = settingsField() { field.mouseDown(with: mouse(.leftMouseDown)) }
+    case "settingsKey" where a.count >= 2: settingsKey(a)
+    case "settingsFlags": if let field = settingsField(), let e = flagsEvent(a) { field.flagsChanged(with: e) }
+    case "setting" where a.count == 3:
+      switch a[1] {
+      case "appearance": model.setAppearance(Appearance(rawValue: a[2]) ?? .system)
+      case "transparent": model.setTransparent(a[2] == "on")
+      default: break
+      }
     case "move" where a.count == 3: move(to: CGPoint(x: Double(a[1]) ?? 0, y: Double(a[2]) ?? 0))
     case "row" where a.count >= 2: if let r = rowFrame(port: a[1], group: a.count > 2 ? a[2] : nil) { move(to: CGPoint(x: r.midX, y: r.midY)) }
     case "more": if let r = model.frames["row:more"] { move(to: CGPoint(x: r.midX, y: r.midY)) }
@@ -181,27 +201,70 @@ final class TestHooks {
 
   /// `modalFlags ctrl opt`: modifiers held down in the alert, or none.
   private func modalFlags(_ a: [String]) {
-    guard let window = NSApp.modalWindow, let cg = CGEvent(keyboardEventSource: nil, virtualKey: 59, keyDown: true) else { return }
+    guard let window = NSApp.modalWindow, let e = flagsEvent(a) else { return }
+    window.firstResponder?.flagsChanged(with: e)
+  }
+
+  private func flagsEvent(_ a: [String]) -> NSEvent? {
+    guard let cg = CGEvent(keyboardEventSource: nil, virtualKey: 59, keyDown: true) else { return nil }
     cg.type = .flagsChanged
     cg.flags = CGEventFlags(rawValue: UInt64(flags(a).rawValue))
-    guard let e = NSEvent(cgEvent: cg) else { return }
-    window.firstResponder?.flagsChanged(with: e)
+    return NSEvent(cgEvent: cg)
+  }
+
+  private func settingsField() -> ShortcutField? {
+    func find(_ v: NSView) -> ShortcutField? {
+      if let f = v as? ShortcutField { return f }
+      for sub in v.subviews { if let f = find(sub) { return f } }
+      return nil
+    }
+    return controller.settings.window?.contentView.flatMap(find)
+  }
+
+  /// `settingsKey 13 cmd chars=w`: a key press in Settings, the way AppKit hands it over, without taking focus.
+  private func settingsKey(_ a: [String]) {
+    guard let window = controller.settings.window else { return }
+    let chars = a.first { $0.hasPrefix("chars=") }.map { String($0.dropFirst(6)) } ?? ""
+    let e = NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: flags(a), timestamp: ProcessInfo.processInfo.systemUptime,
+      windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+      isARepeat: false, keyCode: UInt16(a[1]) ?? 0)!
+    if !e.modifierFlags.intersection([.command, .control]).isEmpty, window.performKeyEquivalent(with: e) { return }
+    window.firstResponder?.keyDown(with: e)
+  }
+
+  /// Renders Settings as AppKit draws it, title bar included. Makes the window without showing it if needed.
+  private func settingsShot(_ path: String) {
+    let window = controller.settings.makeWindow()
+    window.contentView?.layoutSubtreeIfNeeded()
+    guard let view = window.contentView?.superview ?? window.contentView,
+          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    guard let data = rep.representation(using: .png, properties: [:]) else { note("settingsShot: no png \(view.bounds)"); return }
+    do { try data.write(to: URL(fileURLWithPath: path)) } catch { note("settingsShot: \(error)") }
   }
 
   /// Checks the shortcut pieces without showing anything or taking focus: the recorder's keys, which keys macOS
   /// already uses, and that a hot key event reaches the handler.
   private func offscreen(_ path: String) {
     var results: [String: Any] = [:]
-    func type(_ name: String, from start: Shortcut?, _ code: UInt16, _ flags: NSEvent.ModifierFlags = [], _ chars: String = "") {
+    func type(
+      _ name: String, from start: Shortcut?, _ code: UInt16, _ flags: NSEvent.ModifierFlags = [], _ chars: String = "",
+      recording: Bool = true, reject: Bool = false
+    ) {
       let field = ShortcutField(shortcut: start)
       fieldCalls = []
-      field.onReturn = { [weak self] in self?.fieldCalls.append("return") }
-      field.onEscape = { [weak self] in self?.fieldCalls.append("escape") }
+      field.onRecord = { [weak self] s in
+        self?.fieldCalls.append("record " + (s?.storage ?? "none"))
+        return reject ? "taken" : nil
+      }
+      field.onRecording = { [weak self] on in self?.fieldCalls.append(on ? "on" : "off") }
+      if recording { field.begin() }
       let e = NSEvent.keyEvent(
         with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
         characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
       field.keyDown(with: e)
-      results[name] = [field.shortcut?.storage ?? "none", fieldCalls.joined(separator: ","), field.accessibilityValue() as? String ?? ""]
+      results[name] = [field.shortcut?.storage ?? "none", fieldCalls.joined(separator: ","), field.text, field.isRecording]
     }
     type("record", from: .standard, 40, [.control, .option, .shift], "k")
     type("delete", from: .standard, 51, [], "\u{8}")
@@ -211,7 +274,11 @@ final class TestHooks {
     type("enter", from: .standard, 76, [], "\u{3}")
     type("commandDelete", from: .standard, 51, [.command], "\u{8}")
     type("f5", from: nil, 96)
-    type("none", from: nil, 53, [], "\u{1B}")
+    type("letter", from: .standard, 0, [], "a")
+    type("taken", from: .standard, 49, [.command], " ", reject: true)
+    type("idleSpace", from: .standard, 49, [], " ", recording: false)
+    type("idleReturn", from: .standard, 36, [], "\r", recording: false)
+    type("idleKeys", from: .standard, 40, [.control, .option], "k", recording: false)
 
     for storage in ["49:8", "20:12", "37:3", "46:12"] {
       results["taken " + storage] = Shortcut(storage: storage)?.isTakenBySystem ?? false
@@ -233,6 +300,38 @@ final class TestHooks {
     if let data = try? JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys]) {
       try? data.write(to: URL(fileURLWithPath: path))
     }
+  }
+
+  /// The panel as the window server shows it, shadow included. An app may capture its own windows without
+  /// screen recording permission. `below` adds what's under it, as far as macOS allows.
+  private func panelShot(_ path: String, below: Bool, bare: Bool = false) {
+    typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+    guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { note("no capture"); return }
+    let capture = unsafeBitCast(sym, to: Capture.self)
+    let f = panel.frame
+    let top = NSScreen.screens.first?.frame.maxY ?? 0
+    let rect = below ? CGRect(x: f.minX - 30, y: top - f.maxY - 30, width: f.width + 60, height: f.height + 60) : .null
+    guard let image = capture(rect, below ? 12 : 8, UInt32(panel.windowNumber), bare ? 1 : 0)?.takeRetainedValue() else { note("capture failed"); return }
+    let rep = NSBitmapImageRep(cgImage: image)
+    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+  }
+
+  /// Captures the panel the next time it opens and takes focus, framed, over what's below, and bare.
+  private func autoShot(_ path: String) {
+    let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self, self.panel.isVisible, self.panel.isKeyWindow else { return }
+        self.shotTimer?.invalidate()
+        self.after(0.8) {
+          self.panelShot(path, below: false)
+          self.panelShot(path.replacingOccurrences(of: ".png", with: "-below.png"), below: true)
+          self.panelShot(path.replacingOccurrences(of: ".png", with: "-bare.png"), below: false, bare: true)
+          self.note("autoshot done")
+        }
+      }
+    }
+    shotTimer = t
+    RunLoop.main.add(t, forMode: .common)
   }
 
   /// Renders the alert as AppKit draws it, since this build can't record the screen.
@@ -284,6 +383,27 @@ final class TestHooks {
     panel.sendEvent(e)
   }
 
+  private func settingsState() -> [String: Any] {
+    guard let w = controller.settings.window else { return ["made": false] }
+    let field = settingsField()
+    var hit = ""
+    if let field, let content = w.contentView {
+      let p = content.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), from: field)
+      hit = content.hitTest(p).map { String(describing: type(of: $0)) } ?? "nil"
+    }
+    return [
+      "made": true, "visible": w.isVisible, "key": w.isKeyWindow, "frame": [w.frame.minX, w.frame.minY, w.frame.width, w.frame.height],
+      "firstResponder": w.firstResponder.map { String(describing: type(of: $0)) } ?? "",
+      "field": field?.text ?? "", "recording": field?.isRecording ?? false, "fieldHit": hit,
+      "appearance": w.effectiveAppearance.name.rawValue,
+    ]
+  }
+
+  private func viewClasses(_ view: NSView?) -> [String] {
+    guard let view else { return [] }
+    return [String(describing: type(of: view))] + view.subviews.flatMap(viewClasses)
+  }
+
   private func dump(_ path: String) {
     let rows = model.rows
     func json(_ r: Row) -> [String: Any] {
@@ -307,6 +427,12 @@ final class TestHooks {
       "active": NSApp.isActive, "alpha": panel.alphaValue,
       "modalFirstResponder": modal?.firstResponder.map { String(describing: type(of: $0)) } ?? "",
       "modalField": (modal?.firstResponder as? NSView)?.accessibilityValue() as? String ?? "",
+      "settings": settingsState(),
+      "appearance": model.appearance.rawValue, "transparent": model.transparent, "launchAtLogin": model.launchAtLogin,
+      "appAppearance": NSApp.appearance?.name.rawValue ?? "nil",
+      "panelAppearance": panel.effectiveAppearance.name.rawValue,
+      "statusAppearance": controller.statusItem.button?.effectiveAppearance.name.rawValue ?? "",
+      "panelViews": viewClasses(panel.contentView),
       "running": rows.running.map(json), "stopped": rows.stopped.map(json), "stoppedTotal": rows.stoppedTotal,
       "groups": (rows.groups ?? []).map { ["name": $0.tag.name, "tint": $0.tag.tint ?? -1, "ports": $0.rows.map { Int($0.port) }] },
       "highlight": model.highlight ?? "", "hot": model.hot ?? "", "stale": model.staleUnderPointer,

@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     model.save()
   }
 
-  /// Turns on Launch at login the first time the app runs from its bundle. The ··· menu turns it off.
+  /// Turns on Launch at login the first time the app runs from its bundle. Settings turns it off.
   private func addLoginItemOnce() {
     let key = "addedLoginItem"
     guard Bundle.main.bundleURL.pathExtension == "app", !UserDefaults.standard.bool(forKey: key) else { return }

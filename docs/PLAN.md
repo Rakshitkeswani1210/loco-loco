@@ -7,11 +7,12 @@ Flow images: `docs/flow/iteration-2/flow.png` (the board) and `docs/flow/iterati
 ## Decided
 
 - Name: Loco Loco.
-- The count shows next to the icon. "Show count in menu bar" in the ··· menu turns it off.
+- The count shows next to the icon. "Show count in menu bar" in Settings turns it off.
 - Stop all… stays, with one confirmation: "Stop all 2 servers?", or "Stop 1 server?" for one.
 - History keeps 20 servers. "Keep history" offers 10, 20 or 50.
 - The context menu has both Open in Terminal and Open in Cursor.
-- Iteration 2 is built as drawn: settings live in the ··· menu (no Settings window), the history group is called Stopped, and the panel is solid, with glass only on the menus. The UI can be tweaked later.
+- Iteration 2 is built as drawn: the history group is called Stopped, and the panel is solid, with glass only on the menus. The UI can be tweaked later.
+- Later, on Oct 13: the settings moved from the ··· menu to a Settings window, which adds Appearance (System, Light or Dark) and a Transparent background switch that puts the panel on Liquid Glass.
 
 ## Direction (Iteration 2)
 
@@ -27,7 +28,7 @@ What changed from Iteration 1:
 - The panel is a solid surface (white, or #252527 in dark) instead of glass.
 - Two groups, **Running** and **Stopped**, each with its count in the header. "Stopped" replaces "Recent" because it says what the rows are.
 - The port comes first, in a fixed column, so the names line up.
-- A ··· button on the Running header opens a menu with Stop all, the settings and Quit. There is no Settings window.
+- A ··· button on the Running header opens a menu with Stop all…, Clear history…, Settings… and Quit.
 - The context menu and the ··· menu stay real macOS menus, with the system glass and the accent highlight.
 
 ## The flow
@@ -47,7 +48,7 @@ What changed from Iteration 1:
 | 11 | Right-click: Open in browser, Copy URL, Restart, Stop, Show in Finder, Open in Terminal, Open in Cursor, Show log. A stopped server also gets Remove from history, last, after a separator. |
 | 12 | Still running after 5 seconds: Force stop. |
 | 13 | After Stop all: "Nothing running". Stopped shows the 5 latest, and the rest sit under More. |
-| 14 | The ··· menu: Stop all…, Launch at login, Show count in menu bar, Show app and macOS servers, Group by project, Keyboard shortcut… (with the current keys on the right), Keep history (10, 20 or 50 servers), Clear history…, Quit Loco Loco. |
+| 14 | The ··· menu: Stop all…, Launch at login, Show count in menu bar, Show app and macOS servers, Group by project, Keyboard shortcut… (with the current keys on the right), Keep history (10, 20 or 50 servers), Clear history…, Quit Loco Loco. Since replaced: the ··· menu is Stop all…, Clear history…, Settings… and Quit, and the rest live in Settings (see Settings below). |
 | 15 | Dark appearance. |
 
 **Rules every frame follows**
@@ -64,14 +65,14 @@ Each row shows which project it belongs to, so he knows where to look. Approved 
 - Five tints: blue, green, purple, orange and teal, with darker ink in light mode and lighter ink in dark mode so the text passes 4.5:1. Increase Contrast makes the tint 1.5 times stronger and pushes the inks further, so every label passes 6.5:1. A project gets the least-used tint the first time it shows up in history, and keeps it. From the sixth project on, tints repeat.
 - The project folder: a git worktree belongs to its main repo. Then it is the first folder below Documents, Desktop, Downloads or another folder that holds projects, else the first folder in the home folder. Loose servers in Documents itself, or outside the home folder, have no label. Trailing spaces in folder names are dropped from the label.
 - Running is sorted newest first. Stopped stays in the order servers stopped.
-- Group by project (··· menu, off by default): running servers sit under a 26pt header with the project's label, 4pt between groups. Rows inside a group drop their label. Groups follow their newest server. Servers with no project go last, under a grey "Other", which shows only when there is at least one project group. Arrow keys move through the rows and skip the headers.
+- Group by project (Settings, off by default): running servers sit under a 26pt header with the project's label, 4pt between groups. Rows inside a group drop their label. Groups follow their newest server. Servers with no project go last, under a grey "Other", which shows only when there is at least one project group. Arrow keys move through the rows and skip the headers.
 - Rename project… (last in the context menu): an alert with a text field. The new name applies to every server in that folder and keeps the tint. An empty name, or the folder's own name, goes back to the folder name. Renaming two folders to the same name puts them in one group.
 
 ## How it works
 
 **Finding servers**
 - Reads the process table directly through the system's libproc (no `lsof`, so it's cheap): every 2 seconds while the panel is open, every 10 seconds otherwise.
-- Keeps processes that listen on a TCP port and run from a folder inside your home folder. Apps and system processes run from `/`, so Figma, OneDrive and Control Center stay hidden. "Show app and macOS servers", in the ··· menu, brings them back. (The folder is the test, not the file path: Homebrew's Python runs from inside an app bundle.)
+- Keeps processes that listen on a TCP port and run from a folder inside your home folder. Apps and system processes run from `/`, so Figma, OneDrive and Control Center stay hidden. "Show app and macOS servers", in Settings, brings them back. (The folder is the test, not the file path: Homebrew's Python runs from inside an app bundle.)
 - One row per server. A port open on both IPv4 and IPv6 counts once. If a server listens on more than one port, the row shows the lowest and the context menu lists the rest.
 - Name: the project folder (nearest folder with `package.json`, `pyproject.toml` or `.git`), skipping `dist`, `build`, `public`, `docs` and `out`. For `uv run name`, the name. If the folder isn't a project, the script's name (`auth-mock.py` → auth-mock).
 - Start time is today's time ("10:37 AM") or the date ("Oct 7").
@@ -86,29 +87,35 @@ Each row shows which project it belongs to, so he knows where to look. Approved 
 - Python servers run with `PYTHONUNBUFFERED=1`, so their log fills while they run instead of when they quit.
 - The row shows a spinner until the port opens. If the process quits first, or 60 seconds pass, the row shows why ("Exited with code 1", "Port in use", "Timed out") and offers Show log and Restart.
 - Restarted servers keep running when you quit Loco Loco.
-- History keeps 20 servers ("Keep history" in the ··· menu: 10, 20 or 50), saved in `~/Library/Application Support/Loco Loco/history.json`. Stopped shows the 5 latest. The rest sit under "More", collapsed, the way Notion's sidebar collapses its pages. More shows only when it hides 2 or more servers; with 6 stopped, all 6 show, because a More row would take the sixth row's place. More opens in place: the panel grows to the height of the screen, then scrolls. "Clear history…" asks once.
+- History keeps 20 servers ("Keep history" in Settings: 10, 20 or 50), saved in `~/Library/Application Support/Loco Loco/history.json`. Stopped shows the 5 latest. The rest sit under "More", collapsed, the way Notion's sidebar collapses its pages. More shows only when it hides 2 or more servers; with 6 stopped, all 6 show, because a More row would take the sixth row's place. More opens in place: the panel grows to the height of the screen, then scrolls. "Clear history…" asks once.
 - Remove from history, in a stopped server's context menu or with ⌘⌫, forgets that one server without asking, so short-lived runs like test suites can go without clearing the rest. Its log stays, as with Clear history. With ⌘⌫ the highlight moves to the next stopped row, and never to a running one, so pressing it again can't stop a server.
 - Open in Terminal opens a Terminal window in the server's folder. Open in Cursor opens the folder in Cursor, and only shows when Cursor is installed.
 - Limit: a server started with extra environment variables (from an IDE run profile, say) may need them. Restart uses the folder, the command and PATH. If that fails, the log says why.
 
 **Keyboard shortcut**
 - ⌃⌥L, from any app, opens the panel in the middle of the screen with the pointer, clear of the menu bar and the Dock. Pressed again, it closes. While the panel is open its top edge stays put, so rows don't jump; it moves up only when the panel grows past the bottom. The menu bar icon isn't highlighted, since the panel doesn't hang from it.
-- Keyboard shortcut… in the ··· menu opens a standard alert with a field that records the keys. Delete means none, Return saves and Esc cancels. The current shortcut is off while the alert is up, so pressing it records it again. The ··· menu shows the shortcut on the right, the way macOS shows any other.
-- A shortcut needs ⌃, ⌥ or ⌘ (F1 to F20 can stand alone), so it can't fire while you type. Keys that macOS already uses, such as ⌘Space for Spotlight, are refused with a pointer to System Settings, and the recorder opens again. Other apps' shortcuts can't be seen, so a clash with one isn't caught.
+- In Settings, click the shortcut field (or focus it and press Space) and type the keys. Delete means none, and Esc, Return or a click elsewhere stops recording. The current shortcut is off while recording, so pressing it records it again.
+- A shortcut needs ⌃, ⌥ or ⌘ (F1 to F20 can stand alone), so it can't fire while you type. Keys that macOS already uses, such as ⌘Space for Spotlight, are refused with a pointer to System Settings under the field, which keeps recording. Other apps' shortcuts can't be seen, so a clash with one isn't caught.
 - Uses Carbon's `RegisterEventHotKey`, which needs no Accessibility permission. Saved as `shortcut` in the app's defaults; an empty value means none.
+
+**Settings**
+- A standard grouped form in a small window, opened with ⌘, or Settings… in the ··· menu: Launch at login, Show count in menu bar, Show app and macOS servers, Group by project; Appearance and Transparent background; Keyboard shortcut; Keep history. Changes apply at once. ⌘W closes it and focus goes back to the app you were in.
+- Appearance is System, Light or Dark, for the panel, the menus, the alerts and Settings. The menu bar icon follows the menu bar. Increase Contrast still applies.
+- Transparent background puts the panel on Liquid Glass (the menu blur before macOS 26) instead of the solid surface. The glass is clipped to the panel's corners: its own faint shadow otherwise fills the window's corners, and macOS then draws a square shadow and outline around the panel.
+- Saved as `appearance` and `transparent` in the app's defaults.
 
 ## Apple HIG, applied
 
-- A menu bar extra. Its panel is a solid surface, after Notion and Linear, instead of the system material. The context menu and the ··· menu are real NSMenus, so they keep Liquid Glass, the accent highlight, checkmarks, ⌘Q and the submenu chevron.
+- A menu bar extra. Its panel is a solid surface, after Notion and Linear, instead of the system material, unless Transparent background is on. The context menu and the ··· menu are real NSMenus, so they keep Liquid Glass, the accent highlight, checkmarks, ⌘Q and the submenu chevron.
 - Panel: 360pt wide (320pt before project labels), 6pt padding, 28pt rows and headers, 8pt between the groups. Corners are concentric: 6pt rows inside a 12pt panel. Times, row buttons, Force stop and the ··· button all end 16pt from the panel's edge.
 - Menus, as measured on this Mac (macOS 26): 5pt padding, 24pt rows, 11pt separators, 8pt highlight corners. The context menu is 158pt wide, the ··· menu 269pt.
 - Text: SF Pro 13pt in rows, 12pt in headers (the group name semibold, the count regular). AppKit label colours. The secondary colour is a little darker than the system's so it passes 4.5:1 on white, and the failure reason uses the darker system red (#d70015, #ff453a in dark) for the same reason.
 - Sentence case everywhere ("Open in browser", "Force stop", "Stop all…"). The HIG asks for title case in menus and buttons; this follows Notion and Linear.
 - SF Symbols for everything except the octopus (see Brand): `stop.fill`, `arrow.clockwise`, `doc.text`, `trash`, `ellipsis`, `globe`, `link`, `folder`, `terminal`, `chevron.left.forwardslash.chevron.right` (Cursor), `checkmark`, `chevron.right`.
 - One symbol and one name per action, in the rows and the context menu: `stop.fill` for Stop, `arrow.clockwise` for Restart (also on a server that didn't start), `doc.text` for Show log, `trash` for Remove from history (context menu only). Row buttons are plain glyphs that darken under the pointer, with a help tag. Stop is 11.75pt and the others 11pt, so the ink matches the mockup, and every row button is 21.5pt wide, so the icons line up from row to row.
-- Keyboard: ⌃⌥L opens the panel from any app (it can be changed or turned off). In the panel, arrow keys move through rows, Return opens, ⌘⌫ stops a running server and removes a stopped one from history, ⌘R restarts, ⌘, opens the ··· menu, ⌘Q quits, Esc closes.
+- Keyboard: ⌃⌥L opens the panel from any app (it can be changed or turned off). In the panel, arrow keys move through rows, Return opens, ⌘⌫ stops a running server and removes a stopped one from history, ⌘R restarts, ⌘, opens Settings, ⌘Q quits, Esc closes.
 - VoiceOver reads each row as "ops-validation-api, port 8000, running since 11:09 AM", with Stop and Restart as actions, and Remove from history on stopped rows.
-- Light, dark, Increase Contrast, Reduce Motion and accent colour all come from the system.
+- Light and dark come from the system unless Appearance in Settings picks one. Increase Contrast, Reduce Motion and accent colour come from the system.
 - No Dock icon. Launch at login uses the system's login items, so it shows up in System Settings like any other app.
 
 ## Brand
@@ -124,7 +131,7 @@ An octopus, so the app feels friendly rather than technical. Direction: Deep sea
 
 - SwiftUI with AppKit where needed, Swift 6, built with Swift Package Manager (no Xcode needed on this Mac).
 - The panel is a borderless panel window under a status item, hosting SwiftUI, so its surface, corners and shadow are ours. The two menus are NSMenus.
-- Four parts: Scanner (finds servers), Store (history file), Runner (starts and stops, writes logs), UI (panel, context menu, ··· menu).
+- Four parts: Scanner (finds servers), Store (history file), Runner (starts and stops, writes logs), UI (panel, context menu, ··· menu, Settings).
 - Packaged as `Loco Loco.app`, signed locally, installed to `~/Applications`, added to login items.
 - Two things found while measuring real menus on macOS 26: an item that uses the system's quit action gets an automatic xmark icon, so Quit uses its own action; and menu item badges draw a grey capsule, so the menus don't use them.
 - No network access, no telemetry, no admin rights. It can only stop processes you own.

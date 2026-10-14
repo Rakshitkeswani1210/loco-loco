@@ -132,34 +132,93 @@ extension Shortcut {
   }
 }
 
-/// Records a shortcut in an alert: press the keys to set it, Delete for none. Return and Esc still reach the alert's buttons.
+/// Records a shortcut: click it, or press Space when it has focus, then press the keys. Delete turns the shortcut off.
+/// Esc, a click elsewhere or leaving the window stops recording without a change.
 final class ShortcutField: NSView {
-  private(set) var shortcut: Shortcut? {
-    didSet { held = [] }
+  var shortcut: Shortcut? {
+    didSet { refresh() }
   }
-  var onReturn: () -> Void = {}
-  var onEscape: () -> Void = {}
+  /// New keys, or nil for none. Returns why they can't be used, and recording goes on; nil when they're saved.
+  var onRecord: @MainActor (Shortcut?) -> String? = { _ in nil }
+  var onRecording: @MainActor (Bool) -> Void = { _ in }
+  private(set) var isRecording = false {
+    didSet { refresh() }
+  }
   /// Modifiers held down before the key, shown while they're pressed.
   private var held: Shortcut.Modifiers = [] {
     didSet { refresh() }
   }
+  private var clickMonitor: Any?
+  private var resignObserver: NSObjectProtocol?
 
   init(shortcut: Shortcut?) {
     self.shortcut = shortcut
-    super.init(frame: NSRect(x: 0, y: 0, width: 220, height: 28))
+    super.init(frame: NSRect(origin: .zero, size: Self.size))
     setAccessibilityElement(true)
-    setAccessibilityRole(.textField)
+    setAccessibilityRole(.button)
     setAccessibilityLabel("Keyboard shortcut")
+    setAccessibilityHelp("Press, then press the keys you want. Delete turns it off.")
     refresh()
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  private var text: String { held.isEmpty ? shortcut?.title ?? "None" : held.symbols }
+  static let size = NSSize(width: 132, height: 22)
+  override var intrinsicContentSize: NSSize { Self.size }
+
+  var text: String {
+    guard isRecording else { return shortcut?.title ?? "None" }
+    return held.isEmpty ? "Type shortcut" : held.symbols
+  }
 
   private func refresh() {
     needsDisplay = true
     setAccessibilityValue(text)
+  }
+
+  func begin() {
+    guard !isRecording else { return }
+    isRecording = true
+    held = []
+    clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] e in
+      let number = e.windowNumber
+      let point = e.locationInWindow
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        if number != self.window?.windowNumber || !self.bounds.contains(self.convert(point, from: nil)) { self.end() }
+      }
+      return e
+    }
+    onRecording(true)
+  }
+
+  func end() {
+    guard isRecording else { return }
+    isRecording = false
+    held = []
+    if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+    clickMonitor = nil
+    onRecording(false)
+  }
+
+  private func record(_ s: Shortcut?) {
+    if onRecord(s) == nil {
+      shortcut = s
+      end()
+    } else {
+      held = []
+      NSSound.beep()
+    }
+  }
+
+  override func viewWillMove(toWindow newWindow: NSWindow?) {
+    end()
+    if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+    resignObserver = nil
+    guard let newWindow else { return }
+    resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: newWindow, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.end() }
+    }
   }
 
   override var acceptsFirstResponder: Bool { true }
@@ -170,19 +229,28 @@ final class ShortcutField: NSView {
   }
 
   override func resignFirstResponder() -> Bool {
-    held = []
+    end()
     return true
   }
 
-  override func mouseDown(with event: NSEvent) { window?.makeFirstResponder(self) }
+  override func mouseDown(with event: NSEvent) {
+    window?.makeFirstResponder(self)
+    begin()
+  }
+
+  override func accessibilityPerformPress() -> Bool {
+    window?.makeFirstResponder(self)
+    begin()
+    return true
+  }
 
   override func draw(_ dirtyRect: NSRect) {
     let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
     NSColor.textBackgroundColor.setFill()
     box.fill()
-    NSColor.separatorColor.setStroke()
+    (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
     box.stroke()
-    let dim = !held.isEmpty || shortcut == nil
+    let dim = isRecording || shortcut == nil
     let s = NSAttributedString(string: text, attributes: [
       .font: NSFont.systemFont(ofSize: 13),
       .foregroundColor: dim ? NSColor.secondaryLabelColor : NSColor.labelColor,
@@ -192,24 +260,31 @@ final class ShortcutField: NSView {
   }
 
   override func keyDown(with e: NSEvent) {
-    if let s = Shortcut(event: e) {
-      shortcut = s
+    let bare = Shortcut.Modifiers(flags: e.modifierFlags).isEmpty
+    guard isRecording else {
+      // Like a button: Space or Return starts recording.
+      if bare, [49, 36, 76].contains(e.keyCode) { begin() } else { super.keyDown(with: e) }
       return
     }
-    let bare = Shortcut.Modifiers(flags: e.modifierFlags).isEmpty
+    if let s = Shortcut(event: e) {
+      record(s)
+      return
+    }
     guard bare || e.keyCode == 48 else { NSSound.beep(); return }
     switch e.keyCode {
-    case 51, 117: shortcut = nil
-    case 53: onEscape()
-    case 36, 76: onReturn()
-    case 48: super.keyDown(with: e)  // Tab and ⇧Tab move to the buttons.
+    case 51, 117: record(nil)
+    case 53, 36, 76: end()
+    case 48:
+      end()
+      super.keyDown(with: e)  // Tab and ⇧Tab move on.
     default: NSSound.beep()
     }
   }
 
-  /// ⌘ and ⌃ keys come here before keyDown. Take them while recording, so they set the shortcut instead of pressing a button.
+  /// ⌘ and ⌃ keys come here before keyDown. Take them while recording, so they set the shortcut instead of
+  /// closing the window or quitting.
   override func performKeyEquivalent(with e: NSEvent) -> Bool {
-    guard e.type == .keyDown, window?.firstResponder === self, Shortcut(event: e) != nil else {
+    guard isRecording, e.type == .keyDown, window?.firstResponder === self, Shortcut(event: e) != nil else {
       return super.performKeyEquivalent(with: e)
     }
     keyDown(with: e)
@@ -217,6 +292,7 @@ final class ShortcutField: NSView {
   }
 
   override func flagsChanged(with e: NSEvent) {
+    guard isRecording else { return super.flagsChanged(with: e) }
     held = Shortcut.Modifiers(flags: e.modifierFlags)
   }
 }

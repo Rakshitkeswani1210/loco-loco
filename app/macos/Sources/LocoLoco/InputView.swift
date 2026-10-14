@@ -116,7 +116,7 @@ final class InputView: NSView, NSViewToolTipOwner {
     case (51, _), (117, _):
       if let h { model.perform(.action(h, model.rows.row(h)?.group == .stopped ? .remove : .stop)) }
     case (_, "r"): if let h { model.perform(.action(h, .restart)) }
-    case (_, ","): model.perform(.more)
+    case (_, ","): model.perform(.settings)
     case (_, "q"): NSApp.terminate(nil)
     case (_, "w"): model.perform(.close)
     default: return super.performKeyEquivalent(with: e)

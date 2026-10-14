@@ -1,6 +1,5 @@
 import AppKit
 import LocoCore
-import ServiceManagement
 import SwiftUI
 
 /// A borderless panel that takes keyboard focus without activating the app, like a menu.
@@ -48,7 +47,9 @@ final class AppController: NSObject, NSWindowDelegate {
   private let hosting: NSHostingView<PanelRoot>
   let input: InputView
   let hotKey = HotKey()
+  private(set) lazy var settings = SettingsController(model: model, hotKey: hotKey)
   private var monitor: Any?
+  private var transparent: Bool
   /// The screen the shortcut opened the panel in the middle of. Nil when it hangs from the menu bar icon.
   private var centeredOn: NSScreen?
   private var closedAt = Date.distantPast
@@ -69,6 +70,7 @@ final class AppController: NSObject, NSWindowDelegate {
     self.model = model
     hosting = NSHostingView(rootView: PanelRoot(model: model))
     input = InputView(model: model)
+    transparent = model.transparent
     super.init()
 
     hosting.sizingOptions = []
@@ -93,6 +95,12 @@ final class AppController: NSObject, NSWindowDelegate {
     model.onFrames = { [weak self] in self?.input.updateToolTips() }
     hotKey.onPress = { [weak self] in self?.toggleCentered() }
     hotKey.register(model.shortcut)
+    NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.applyAppearance() }
+    }
+    applyAppearance()
     update()
     observe()
   }
@@ -103,6 +111,8 @@ final class AppController: NSObject, NSWindowDelegate {
     withObservationTracking {
       _ = model.rows
       _ = model.showCount
+      _ = model.appearance
+      _ = model.transparent
     } onChange: { [weak self] in
       Task { @MainActor in self?.update(); self?.observe() }
     }
@@ -118,7 +128,24 @@ final class AppController: NSObject, NSWindowDelegate {
       button.imagePosition = shown ? .imageLeading : .imageOnly
       button.setAccessibilityLabel(n == 1 ? "Loco Loco, 1 server running" : "Loco Loco, \(n) servers running")
     }
+    applyAppearance()
+    if transparent != model.transparent {
+      transparent = model.transparent
+      panel.invalidateShadow()
+    }
     if panel.isVisible { layout() }
+  }
+
+  /// Light or Dark for the panel, menus, alerts and Settings. The menu bar icon follows the menu bar, not this.
+  private func applyAppearance() {
+    let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    let name: NSAppearance.Name? = switch model.appearance {
+    case .system: nil
+    case .light: contrast ? .accessibilityHighContrastAqua : .aqua
+    case .dark: contrast ? .accessibilityHighContrastDarkAqua : .darkAqua
+    }
+    guard NSApp.appearance?.name != name else { return }
+    NSApp.appearance = name.flatMap { NSAppearance(named: $0) }
   }
 
   // MARK: Open and close
@@ -177,7 +204,8 @@ final class AppController: NSObject, NSWindowDelegate {
         self.panel.alphaValue = 1
         self.closing = false
         self.model.resetPointer()
-        if NSApp.isActive {
+        // Settings keeps focus when it opened from the panel.
+        if NSApp.isActive, !self.settings.isVisible {
           if let app = self.returnFocusTo, !app.isTerminated { app.activate() } else { NSApp.deactivate() }
         }
         self.returnFocusTo = nil
@@ -250,6 +278,7 @@ final class AppController: NSObject, NSWindowDelegate {
     case let .action(id, action): perform(action, on: id)
     case let .menu(id, point): showContextMenu(for: id, at: point)
     case .more: showMoreMenu()
+    case .settings: openSettings()
     case .close: close()
     }
   }
@@ -374,47 +403,11 @@ final class AppController: NSObject, NSWindowDelegate {
     menu.autoenablesItems = false
 
     menu.addItem(ActionItem("Stop all…", enabled: !model.stoppable.isEmpty) { [weak self] in self?.confirmStopAll() })
-    menu.addItem(.separator())
-    let login = ActionItem("Launch at login") { [weak self] in self?.toggleLogin() }
-    login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-    menu.addItem(login)
-    let count = ActionItem("Show count in menu bar") { [weak self] in
-      guard let self else { return }
-      self.model.setShowCount(!self.model.showCount)
-    }
-    count.state = model.showCount ? .on : .off
-    menu.addItem(count)
-    let all = ActionItem("Show app and macOS servers") { [weak self] in
-      guard let self else { return }
-      self.model.setShowAll(!self.model.showAll)
-    }
-    all.state = model.showAll ? .on : .off
-    menu.addItem(all)
-    let group = ActionItem("Group by project") { [weak self] in
-      guard let self else { return }
-      self.model.setGroupByProject(!self.model.groupByProject)
-    }
-    group.state = model.groupByProject ? .on : .off
-    menu.addItem(group)
-    let shortcut = ActionItem("Keyboard shortcut…") { [weak self] in self?.editShortcut() }
-    if hotKey.isRegistered, let s = model.shortcut, let key = s.menuKey {
-      shortcut.keyEquivalent = key
-      shortcut.keyEquivalentModifierMask = s.modifiers.flags
-    }
-    menu.addItem(shortcut)
-    menu.addItem(.separator())
-    let keep = NSMenuItem(title: "Keep history", action: nil, keyEquivalent: "")
-    let limits = NSMenu()
-    for n in [10, 20, 50] {
-      let item = ActionItem("\(n) servers") { [weak self] in self?.model.setHistoryLimit(n) }
-      item.state = model.historyLimit == n ? .on : .off
-      limits.addItem(item)
-    }
-    keep.submenu = limits
-    menu.addItem(keep)
     menu.addItem(ActionItem("Clear history…", enabled: model.history.entries.contains { !$0.isRunning }) { [weak self] in
       self?.confirmClearHistory()
     })
+    menu.addItem(.separator())
+    menu.addItem(ActionItem("Settings…", key: ",") { [weak self] in self?.openSettings() })
     menu.addItem(.separator())
     menu.addItem(ActionItem("Quit Loco Loco", key: "q") { NSApp.terminate(nil) })
 
@@ -434,13 +427,13 @@ final class AppController: NSObject, NSWindowDelegate {
     model.hover()
   }
 
-  private func toggleLogin() {
-    let service = SMAppService.mainApp
-    do {
-      if service.status == .enabled { try service.unregister() } else { try service.register() }
-    } catch {
-      _ = alert("Couldn't change Launch at login", info: error.localizedDescription, action: nil)
-    }
+  /// Closes the panel and brings up Settings, which gives focus back to the app you were in when it closes.
+  func openSettings() {
+    var app = returnFocusTo
+    if !NSApp.isActive, let front = NSWorkspace.shared.frontmostApplication, front != .current { app = front }
+    returnFocusTo = nil
+    close()
+    settings.show(returningFocusTo: app)
   }
 
   // MARK: Alerts
@@ -467,40 +460,6 @@ final class AppController: NSObject, NSWindowDelegate {
     if alert("Rename project", info: info, action: "Rename", destructive: false, field: field) {
       model.renameProject(root: root, to: field.stringValue)
     }
-  }
-
-  /// Records new keys for the shortcut. The current one is off meanwhile, so pressing it records it again.
-  private func editShortcut() {
-    hotKey.unregister()
-    var shown = model.shortcut
-    while let choice = recordShortcut(shown) {
-      shown = choice
-      if let s = choice, s != model.shortcut, s.isTakenBySystem {
-        _ = alert("macOS already uses \(s.title)", info: "Try other keys, or turn that shortcut off in System Settings > Keyboard > Keyboard Shortcuts.", action: nil)
-      } else if hotKey.register(choice) {
-        model.setShortcut(choice)
-        return
-      } else {
-        _ = alert("Couldn't use \(choice?.title ?? "those keys")", info: "Try other keys.", action: nil)
-      }
-    }
-    hotKey.register(model.shortcut)
-  }
-
-  /// Nil when cancelled. Otherwise the keys chosen, which are nil for none.
-  private func recordShortcut(_ shortcut: Shortcut?) -> Shortcut?? {
-    let field = ShortcutField(shortcut: shortcut)
-    let a = NSAlert()
-    a.messageText = "Keyboard shortcut"
-    a.informativeText = "Opens Loco Loco in the middle of the screen, from any app. Press the keys you want, or Delete for none."
-    a.addButton(withTitle: "Save")
-    a.addButton(withTitle: "Cancel")
-    a.accessoryView = field
-    field.onReturn = { [weak a] in a?.buttons.first?.performClick(nil) }
-    field.onEscape = { [weak a] in a?.buttons.last?.performClick(nil) }
-    a.layout()
-    a.window.initialFirstResponder = field
-    return runAlert(a) == .alertFirstButtonReturn ? .some(field.shortcut) : nil
   }
 
   /// Shows an alert above the open panel. Returns true when the action button is chosen.
