@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loco Loco · Windows</title>
+<!-- The Windows flow board. The frames are real screenshots of the app, taken by CI (app/windows/scripts/check.ps1),
+     so this page only lays them out. Render: PAGE=windows.html OUT=docs/flow/windows node mockups/tools/render.mjs -->
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: #f0f0f2; }
+body { font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #1d1d1f; }
+
+.board { padding: 48px 56px 24px; width: max-content; }
+.board h1 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 6px; }
+.board .source { font-size: 14px; line-height: 20px; color: #48484a; margin-bottom: 36px; }
+.lane { margin-bottom: 40px; }
+.lane h2 { font-size: 15px; line-height: 20px; font-weight: 600; margin-bottom: 14px; }
+.row-of-frames { display: grid; grid-template-columns: repeat(5, 446px); column-gap: 32px; align-items: start; }
+figure figcaption { margin-top: 12px; font-size: 14px; line-height: 20px; color: #48484a; display: flex; gap: 8px; }
+figcaption b { flex: none; min-width: 20px; font-weight: 600; font-variant-numeric: tabular-nums; color: #1d1d1f; }
+
+/* The bottom-right corner of the screen: the flyout, what opens above it, and the taskbar. */
+.shot {
+  width: 446px; height: 520px; border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.08);
+  background: #dfe8f2;
+}
+.shot img { display: block; width: 100%; height: 100%; object-fit: none; object-position: right bottom; }
+.icons { width: 1152px; height: 576px; border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
+.icons img { display: block; width: 100%; }
+</style>
+</head>
+<body>
+<main class="board" id="board"></main>
+<script>
+const LANES = [
+  ['Open', [
+    ['01-open', 'Click the octopus. Running, with its count; the port first, then the project and the start time.'],
+    ['02-hover', 'Point at a row: Stop takes the place of the time.'],
+    ['03-row-menu', 'Right-click a row: a Windows menu with shortcuts.'],
+    ['04-more-menu', '··· has Stop all, the settings and Quit.'],
+    ['05-dark', 'Dark follows Windows.'],
+  ]],
+  ['Stop and restart', [
+    ['06-stopping', 'Stopping: the row dims and shows a progress ring.'],
+    ['07-stopped', 'Stopped: it moves to Stopped, with the time it stopped.'],
+    ['08-dialog', 'Stop all asks once, in a dialog inside the flyout.'],
+    ['09-empty', 'Nothing running: the octopus sleeps.'],
+    ['10-restarted', 'Restart runs the same command in the same folder.'],
+  ]],
+];
+const src = id => `../docs/flow/windows/${id}.png`;
+
+let html = '<h1>Loco Loco · Windows</h1><p class="source">Screenshots of the app on Windows Server 2025 at 100% scale, taken by CI on demo servers.</p>', n = 0;
+for (const [lane, frames] of LANES) {
+  html += `<section class="lane"><h2>${lane}</h2><div class="row-of-frames">`;
+  for (const [id, cap] of frames) html += `<figure><div class="shot"><img src="${src(id)}" alt=""></div><figcaption><b>${++n}</b><span>${cap}</span></figcaption></figure>`;
+  html += '</div></section>';
+}
+html += `<section class="lane"><h2>Taskbar</h2><figure><div class="icons"><img src="${src('11-tray-icons')}" alt=""></div>` +
+  `<figcaption><b>${++n}</b><span>The tray octopus at 16, 20, 24 and 32 px, on light and dark taskbars: asleep, awake, 4 running, and 10 (9+ at 16 px).</span></figcaption></figure></section>`;
+document.getElementById('board').innerHTML = html;
+
+Promise.all([...document.images].map(i => i.complete ? i.decode().catch(() => {}) : new Promise(r => { i.onload = i.onerror = r; })))
+  .then(() => {
+    const broken = [...document.images].filter(i => !i.naturalWidth).map(i => i.src);
+    if (broken.length) throw new Error('missing ' + broken.join(', '));
+    window.__ready = true;
+  });
+</script>
+</body>
+</html>

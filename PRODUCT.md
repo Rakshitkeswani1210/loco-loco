@@ -6,11 +6,13 @@
 
 ios
 
-(Closest bare value. The product is a native macOS 26 Tahoe menu bar app; Apple HIG for macOS governs.)
+(Closest bare value. The product is a native macOS 26 Tahoe menu bar app, where Apple HIG for macOS governs, and a native Windows 11 notification-area app, where the Windows 11 and Fluent guidelines govern.)
 
 ## Stack
 
 Swift 6 + SwiftUI hosted in a borderless panel under an `NSStatusItem` (so the panel's surface is ours), AppKit `NSMenu` for the context and ··· menus, libproc/sysctl for process data. Built with SwiftPM from Command Line Tools (no Xcode on this Mac), bundled as `Loco Loco.app`, ad-hoc signed.
+
+Windows: C# on .NET 10 + WinUI 3 (Windows App SDK) in a borderless flyout above the notification-area icon (H.NotifyIcon), WinUI `MenuFlyout` for the menus, the IP Helper API and process reads for process data. Unpackaged and self-contained, shipped as x64 and Arm64 zips on GitHub releases, unsigned. No code is shared with the Mac app; both follow the same rules (`docs/PLAN.md`, `docs/WINDOWS.md`).
 
 ## Users
 
@@ -33,20 +35,20 @@ It records how each server was started (folder + command), so Restart works even
 
 ## Capabilities and Constraints
 
-- Shows dev servers only by default; "Show app and macOS servers" in the ··· menu includes the rest.
+- Shows dev servers only by default; "Show app and macOS servers" ("Show app and Windows servers") in the ··· menu includes the rest.
 - Stop is one click (graceful, then Force stop if needed).
 - Restart runs in the background; output goes to a log he can open from the app.
 - History is local only; stores folder, command and PATH, never other environment variables.
-- Menu bar only (no Dock icon), launch at login.
+- Menu bar only (no Dock icon), launch at login. On Windows: notification area only (no taskbar button), Start with Windows, and a right-click menu on the icon.
 - Can only see and stop processes owned by the current user.
 - Settings live in the ··· menu; there is no Settings window.
 - Decided: name Loco Loco; count next to the icon (can be turned off); Stop all… with one confirmation; 20 servers of history (10, 20 or 50); Open in Terminal and Open in Cursor.
 
 ## Brand Commitments
 
-Apple HIG for behaviour: system font, SF Symbols for actions, Light and Dark appearance, real NSMenus with the system glass and accent highlight. The look of the panel follows Notion and Linear (researched on Mobbin): a solid surface, groups with a count in the header, quiet 28pt rows, sentence case.
+Apple HIG for behaviour: system font, SF Symbols for actions, Light and Dark appearance, real NSMenus with the system glass and accent highlight. The look of the panel follows Notion and Linear (researched on Mobbin): a solid surface, groups with a count in the header, quiet 28pt rows, sentence case. On Windows the same flyout uses Segoe UI Variable, Segoe Fluent Icons, WinUI menus and dialogs, and 32 px rows.
 
-Identity: an octopus, so it feels friendly rather than technical. Deep sea: a white line octopus on navy (#16465A to #0D2B3B) for the app icon, a solid octopus in the menu bar that closes its eyes when nothing runs, and a small sleeping line octopus in the empty panel.
+Identity: an octopus, so it feels friendly rather than technical. Deep sea: a white line octopus on navy (#16465A to #0D2B3B) for the app icon, a solid octopus in the menu bar (or the notification area, with an accent count badge) that closes its eyes when nothing runs, and a small sleeping line octopus in the empty panel.
 
 ## Evidence on Hand
 
@@ -61,4 +63,4 @@ Real servers running on 2026-10-09 (ports 3000, 3001, 4193, 4211, 4322, 4323, 80
 
 ## Accessibility & Inclusion
 
-VoiceOver labels for every row and action, full keyboard navigation in the panel, Reduce Motion and Increase Contrast respected.
+VoiceOver (Narrator on Windows) labels for every row and action, full keyboard navigation in the panel, Reduce Motion and Increase Contrast (animation off and contrast themes on Windows) respected.

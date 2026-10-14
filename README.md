@@ -2,9 +2,9 @@
 
 # Loco Loco
 
-A macOS menu bar app for the localhost servers you have running. See them in one place, stop the ones you don't need, and restart them later from Stopped.
+An app for the localhost servers you have running, in the macOS menu bar or the Windows taskbar. See them in one place, stop the ones you don't need, and restart them later from Stopped.
 
-## Install
+## Install on a Mac
 
 You need macOS 14 or later and the Xcode Command Line Tools. If `swift --version` prints nothing, run `xcode-select --install` first.
 
@@ -20,32 +20,46 @@ macOS may ask to let Loco Loco access a folder such as Documents or Desktop. Cli
 
 To update, run `git pull` and the script again.
 
+## Install on Windows
+
+You need Windows 11.
+
+1. Download `LocoLoco-1.0.0-windows-x64.zip` from [Releases](https://github.com/Rakshitkeswani1210/loco-loco/releases/latest). On an Arm PC, take the `arm64` zip.
+2. Unzip it anywhere, for example into `Documents`, and run `Loco Loco.exe` in the `Loco Loco` folder.
+3. The app isn't signed, so SmartScreen asks the first time. Click More info, then Run anyway.
+4. The octopus starts under ^ at the right of the taskbar. Drag it onto the taskbar so it's always in view.
+
+To update, quit Loco Loco and unzip the new version over the old folder.
+
 ## Use
 
 - Click the octopus to see Running and Stopped.
 - Click a running row to open it in the browser. Hover it to stop it.
 - Hover a stopped row to restart it. It runs the same command in the same folder, in the background.
-- Right-click a row for Copy URL, Show in Finder, Open in Terminal, Show log, and Open in Cursor if you have Cursor.
-- The ··· menu has Stop all, Launch at login and the other settings.
+- Right-click a row for Copy URL, Show in Finder (File Explorer on Windows), Open in Terminal, Show log, and Open in Cursor if you have Cursor.
+- The ··· menu has Stop all, Launch at login (Start with Windows) and the other settings.
+- On Windows, right-click the octopus for Open Loco Loco, Stop all… and Quit Loco Loco.
 
 Loco Loco lists processes that listen on a port and run from a folder inside your home folder, so apps like Figma stay hidden. It can only see and stop your own processes.
 
 ## Your data
 
-Everything stays on your Mac:
+Everything stays on your computer. For each stopped server, the history keeps the folder, command, port and PATH, and no other environment variables.
 
-- History: `~/Library/Application Support/Loco Loco/history.json`. For each stopped server it keeps the folder, command, port and PATH, and no other environment variables.
-- Restart output: `~/Library/Logs/Loco Loco/`
+- Mac history: `~/Library/Application Support/Loco Loco/history.json`. Restart output: `~/Library/Logs/Loco Loco/`
+- Windows history: `%LOCALAPPDATA%\Loco Loco\history.json`. Restart output: `%LOCALAPPDATA%\Loco Loco\Logs\`
 
 ## Uninstall
 
-Choose Quit Loco Loco from the ··· menu, then delete `~/Applications/Loco Loco.app` and the two folders above.
+- Mac: choose Quit Loco Loco from the ··· menu, then delete `~/Applications/Loco Loco.app` and the two folders above.
+- Windows: turn off Start with Windows in the ··· menu, choose Quit Loco Loco, then delete the `Loco Loco` folder you unzipped and `%LOCALAPPDATA%\Loco Loco`.
 
 ## Develop
 
 - `app/macos/scripts/test.sh` runs the Mac tests.
-- `docs/PLAN.md` has the decisions and how the app was checked. `PRODUCT.md` is the product brief.
-- `docs/flow/` has the flow images, and `docs/brand/` the octopus.
+- `app/windows` is the Windows app, in C# with WinUI 3. You need the .NET 10 SDK. On Windows, `scripts/test.ps1` runs the tests, `scripts/build.ps1` builds both zips into `app/windows/dist`, and `scripts/check.ps1` runs the app on demo servers and takes screenshots. GitHub Actions runs all three on every push.
+- `docs/PLAN.md` has the Mac decisions and how the app was checked, and `docs/WINDOWS.md` the same for Windows. `PRODUCT.md` is the product brief.
+- `docs/flow/` has the flow images (`docs/flow/windows/` for Windows), and `docs/brand/` the octopus.
 - The HTML mockups in `mockups/` use SF Symbols, which aren't in the repo. To export them from your Mac, run this from the repo root:
 
   ```sh
