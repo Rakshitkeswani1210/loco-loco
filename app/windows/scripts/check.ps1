@@ -50,24 +50,28 @@ function Run([string]$file, [string[]]$arguments) {
 }
 
 $servers = @(
-    @{ Name = 'storefront-web'; Port = (Port 5173); Program = 'node'; Args = { param($p) @('server.js', "$p") }
+    @{ Name = 'storefront-web'; Port = (Port 5173); Command = { param($p) "node server.js $p" }
        Files = @{
            'package.json' = '{ "name": "storefront-web", "private": true }'
            'server.js' = "const port = +process.argv[2];`nrequire('http').createServer((q, s) => s.end('storefront-web\n')).listen(port, '127.0.0.1', () => console.log('listening on ' + port));"
        } },
-    @{ Name = 'ops-validation-api'; Port = (Port 8000); Program = 'python'; Args = { param($p) @('-m', 'http.server', "$p", '--bind', '127.0.0.1') }
+    @{ Name = 'ops-validation-api'; Port = (Port 8000); Command = { param($p) "python -m http.server $p --bind 127.0.0.1" }
        Files = @{ 'pyproject.toml' = "[project]`nname = `"ops-validation-api`"`nversion = `"0.1.0`"" } },
-    @{ Name = 'design-docs'; Port = (Port 4321); Program = 'python'; Args = { param($p) @('-m', 'http.server', "$p", '--bind', '127.0.0.1') }
+    @{ Name = 'design-docs'; Port = (Port 4321); Command = { param($p) "python -m http.server $p --bind 127.0.0.1" }
        Files = @{ 'index.html' = '<h1>design-docs</h1>' } }
 )
 $ports = $servers | ForEach-Object { $_.Port }
+$terminals = @()
 
 $code = 1
 try {
     foreach ($s in $servers) {
         $dir = Folder $s.Name $s.Files
-        # Each in its own hidden console, as if started in a terminal, so Stop can send it Ctrl+C.
-        Start-Process -FilePath $s.Program -ArgumentList (& $s.Args $s.Port) -WorkingDirectory $dir -WindowStyle Hidden | Out-Null
+        # Each in its own hidden terminal, as a person or VS Code would run it. Loco Loco lists servers
+        # started from a terminal, and hides what a background service such as this CI runner starts.
+        $command = & $s.Command $s.Port
+        $terminals += Start-Process -FilePath (Get-Process -Id $PID).Path -PassThru -WindowStyle Hidden -WorkingDirectory $dir `
+            -ArgumentList '-NoLogo', '-NoProfile', '-NoExit', '-Command', $command
     }
     $end = (Get-Date).AddSeconds(30)
     while (@($ports | Where-Object { -not (Listening $_) }).Count -gt 0) {
@@ -80,7 +84,10 @@ try {
         $listed = & $Scan | Out-String
         Write-Host $listed
         foreach ($s in $servers) {
-            if ($listed -notmatch [regex]::Escape($s.Name)) { throw "loco-scan didn't list $($s.Name)" }
+            if ($listed -notmatch [regex]::Escape($s.Name)) {
+                & $Scan --all | Out-String | Write-Host
+                throw "loco-scan didn't list $($s.Name)"
+            }
         }
     }
 
@@ -94,7 +101,8 @@ try {
     Get-ChildItem $Out -Recurse -File | ForEach-Object { Write-Host $_.FullName.Substring($Out.Length + 1) }
 }
 finally {
-    # Only the ports this script started, including servers Loco Loco restarted on them.
+    # Only what this script started: its terminals, and whatever listens on its ports, including servers Loco Loco restarted.
+    foreach ($t in $terminals) { Stop-Process -Id $t.Id -Force -ErrorAction SilentlyContinue }
     foreach ($p in $ports) {
         Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
