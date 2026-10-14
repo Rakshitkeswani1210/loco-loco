@@ -1,0 +1,64 @@
+# Builds, tests and runs the Windows app on GitHub's Windows machines.
+# The zips and the screenshots the app took of itself are attached to each run.
+name: Windows
+
+on:
+  push:
+    branches: [main, windows]
+    paths: ['app/windows/**', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['app/windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/windows
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Test, including the real Python and Node servers
+        run: ./scripts/test.ps1 -c Release --logger "console;verbosity=normal"
+
+      - name: Build x64 and Arm64
+        run: ./scripts/build.ps1
+
+      - name: Build loco-scan
+        run: dotnet publish src/loco-scan -c Release -r win-x64 --self-contained false -o dist/loco-scan
+
+      - name: Run the app on demo servers and take screenshots
+        run: ./scripts/check.ps1 -Exe "dist/x64/Loco Loco/Loco Loco.exe" -Out shots -Scan dist/loco-scan/loco-scan.exe
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots
+          path: app/windows/shots
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zips
+          path: app/windows/dist/*.zip
+          compression-level: 0
+          if-no-files-found: error

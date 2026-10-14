@@ -6,3 +6,6 @@ mockups/wallpapers/
 mockups/symbols/
 bin/
 obj/
+# Windows build output and screenshot runs (app/windows/scripts).
+app/windows/dist/
+app/windows/shots/
