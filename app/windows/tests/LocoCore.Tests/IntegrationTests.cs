@@ -103,6 +103,13 @@ public sealed class IntegrationTests : IDisposable
         }
     }
 
+    /// <summary>Reads a log the server still has open for writing, as a text editor would.</summary>
+    static string ReadShared(string path)
+    {
+        using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return new StreamReader(f).ReadToEnd();
+    }
+
     Row Running(ushort port)
     {
         Until(() => Find(port) is { Group: RowGroup.Running, State: RowState.Idle }, $"a server on port {port}");
@@ -167,8 +174,8 @@ public sealed class IntegrationTests : IDisposable
         Assert.True(WinLauncher.PortInUse(port));
 
         var log = Paths.LogFor("node-site");
-        Until(() => File.Exists(log) && File.ReadAllText(log).Contains("listening on " + port), "the log");
-        var text = File.ReadAllText(log);
+        Until(() => File.Exists(log) && ReadShared(log).Contains("listening on " + port), "the log");
+        var text = ReadShared(log);
         Assert.Contains("[Loco Loco]", text);
         Assert.Contains("$ " + E.History[row.EntryId!.Value]!.Command, text);
 
