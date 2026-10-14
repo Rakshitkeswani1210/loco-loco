@@ -2,6 +2,8 @@
   <Folder Name="/src/">
     <Project Path="src/loco-scan/loco-scan.csproj" />
     <Project Path="src/LocoCore/LocoCore.csproj" />
+    <Project Path="src/LocoLoco/LocoLoco.csproj" />
+    <Project Path="src/make-icon/make-icon.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/LocoCore.Tests/LocoCore.Tests.csproj" />
