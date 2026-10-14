@@ -18,6 +18,8 @@ foreach ($a in $Arch) {
     if (Test-Path $folder) { Remove-Item $folder -Recurse -Force }
     dotnet publish (Join-Path $root 'src\LocoLoco') -c Release -r "win-$a" -o $folder
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    # Without it WinUI can't find its own themes, and the app fails on launch.
+    if (-not (Test-Path (Join-Path $folder 'resources.pri'))) { throw "The $a build has no resources.pri" }
     $zip = Join-Path $dist "LocoLoco-$version-windows-$a.zip"
     Compress-Archive -Path $folder -DestinationPath $zip -Force
     Write-Host "Built $zip"
