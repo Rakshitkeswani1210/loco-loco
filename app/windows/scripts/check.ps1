@@ -96,6 +96,10 @@ try {
         $path = Join-Path $Out $f
         if (Test-Path $path) { Write-Host "---- $f"; Get-Content $path | Write-Host }
     }
+    if ($code -ne 0) {
+        Write-Host '---- resource files next to the app'
+        Get-ChildItem (Split-Path $Exe) -Filter *.pri | ForEach-Object { Write-Host "$($_.Name)  $($_.Length) bytes" }
+    }
     $icons = Run $Exe @('--icons', (Join-Path $Out 'icons'))
     if ($icons -ne 0) { Write-Host "--icons exited with $icons"; if ($code -eq 0) { $code = $icons } }
     Get-ChildItem $Out -Recurse -File | ForEach-Object { Write-Host $_.FullName.Substring($Out.Length + 1) }

@@ -15,6 +15,8 @@
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <!-- Self-contained needs a runtime, so a plain dotnet build or run on Windows builds for that PC. -->
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT'">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <!-- An unpackaged app looks for resources.pri first. The default name follows the project, not "Loco Loco.exe". -->
+    <ProjectPriFileName>resources.pri</ProjectPriFileName>
     <ApplicationIcon>Assets\LocoLoco.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
