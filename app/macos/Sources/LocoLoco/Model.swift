@@ -29,6 +29,22 @@ enum RowAction: String, Sendable {
   }
 }
 
+/// The project a row belongs to, drawn as a tinted label.
+struct ProjectTag: Equatable {
+  /// The folder that names the project. Nil for the Other group.
+  let root: String?
+  let name: String
+  /// An index into `Palette.tags`. Nil draws it grey.
+  let tint: Int?
+}
+
+/// Running servers from one project, under its label.
+struct ProjectGroup: Identifiable, Equatable {
+  let tag: ProjectTag
+  var rows: [Row]
+  var id: String { tag.root == nil ? "\u{0}other" : tag.name }
+}
+
 /// One line in the panel.
 struct Row: Identifiable, Equatable {
   enum State: Equatable { case idle, stopping, starting, force }
@@ -40,6 +56,7 @@ struct Row: Identifiable, Equatable {
   let ports: [UInt16]
   let name: String
   let folder: String
+  let project: ProjectTag?
   /// Start time while running, stop time once stopped.
   let time: Date
   let failure: String?
@@ -74,14 +91,18 @@ struct Row: Identifiable, Equatable {
       else if group == .running { status = "running since \(TimeText.short(time))" }
       else { status = "stopped \(TimeText.short(time))" }
     }
-    return "\(name), port \(port), \(status)"
+    let project = project.map { ", \($0.name)" } ?? ""
+    return "\(name)\(project), port \(port), \(status)"
   }
 }
 
 struct Rows: Equatable {
   static let more = "more"
 
+  /// Newest first. When grouped, in group order.
   var running: [Row] = []
+  /// Set when Group by project is on and some server has a project.
+  var groups: [ProjectGroup]?
   var stopped: [Row] = []
   /// Every stopped server, including the ones under More.
   var stoppedTotal = 0
@@ -117,6 +138,11 @@ final class Model {
   private(set) var showCount: Bool
   private(set) var showAll: Bool
   private(set) var historyLimit: Int
+  private(set) var groupByProject: Bool
+  /// Project names you chose, by project folder.
+  private(set) var projectNames: [String: String]
+  /// Label colours by project name, given out in the order projects first appear.
+  private(set) var projectTints: [String: Int]
 
   // MARK: Servers and history
 
@@ -162,13 +188,25 @@ final class Model {
   @ObservationIgnored private var firstScan = true
   @ObservationIgnored private var lastSave = Date.distantPast
   @ObservationIgnored private let home = NSHomeDirectory()
+  /// Where project labels are worked out from. Test builds can point it at fixtures outside the real home folder.
+  @ObservationIgnored private let projectHome: String = {
+    #if TEST_HOOKS
+    if let h = ProcessInfo.processInfo.environment["LOCO_PROJECT_HOME"] { return h }
+    #endif
+    return NSHomeDirectory()
+  }()
+  /// Project folders found this session, by server folder. Nil when a folder has none.
+  @ObservationIgnored private var rootCache: [String: String?] = [:]
 
   init() {
     let d = UserDefaults.standard
-    d.register(defaults: ["showCount": true, "showAll": false, "historyLimit": 20])
+    d.register(defaults: ["showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false])
     showCount = d.bool(forKey: "showCount")
     showAll = d.bool(forKey: "showAll")
     historyLimit = d.integer(forKey: "historyLimit")
+    groupByProject = d.bool(forKey: "groupByProject")
+    projectNames = d.dictionary(forKey: "projectNames") as? [String: String] ?? [:]
+    projectTints = d.dictionary(forKey: "projectTints") as? [String: Int] ?? [:]
     history = History(entries: History.load(), limit: d.integer(forKey: "historyLimit"))
   }
 
@@ -183,21 +221,22 @@ final class Model {
         shown.insert(id)
         out.running.append(Row(
           id: id.uuidString, group: .running, port: s.port, ports: s.ports, name: e.name, folder: e.projectDir,
-          time: e.startedAt, failure: nil, state: state(id), entryID: id, server: s, logPath: e.logPath))
+          project: tag(e.projectRoot), time: e.startedAt, failure: nil, state: state(id), entryID: id, server: s, logPath: e.logPath))
       } else if showAll, !s.isDevServer {
         out.running.append(Row(
           id: "app-\(s.root.pid)-\(s.root.startMicros)", group: .running, port: s.port, ports: s.ports, name: s.name,
-          folder: s.projectDir, time: s.startedAt, failure: nil, state: .idle, entryID: nil, server: s, logPath: nil))
+          folder: s.projectDir, project: nil, time: s.startedAt, failure: nil, state: .idle, entryID: nil, server: s, logPath: nil))
       }
     }
     // Starting, not listening yet: shown in Running with a spinner.
     for (id, b) in busy where !shown.contains(id) {
-      guard case .starting = b, let e = history[id], only?.contains(e.port) ?? true else { continue }
+      guard case let .starting(_, since) = b, let e = history[id], only?.contains(e.port) ?? true else { continue }
       out.running.append(Row(
         id: id.uuidString, group: .running, port: e.port, ports: e.ports, name: e.name, folder: e.projectDir,
-        time: e.startedAt, failure: nil, state: .starting, entryID: id, server: nil, logPath: e.logPath))
+        project: tag(e.projectRoot), time: since, failure: nil, state: .starting, entryID: id, server: nil, logPath: e.logPath))
     }
-    out.running.sort { ($0.port, $0.name, $0.id) < ($1.port, $1.name, $1.id) }
+    out.running.sort { ($1.time, $0.port, $0.id) < ($0.time, $1.port, $1.id) }
+    if groupByProject { group(&out) }
 
     let stopped = history.stopped.filter { busy[$0.id] == nil && (only?.contains($0.port) ?? true) }
     out.stoppedTotal = stopped.count
@@ -206,9 +245,86 @@ final class Model {
     for e in stopped.prefix(limit) {
       out.stopped.append(Row(
         id: e.id.uuidString, group: .stopped, port: e.port, ports: e.ports, name: e.name, folder: e.projectDir,
-        time: e.stoppedAt ?? e.lastSeenAt, failure: e.failure, state: .idle, entryID: e.id, server: nil, logPath: e.logPath))
+        project: tag(e.projectRoot), time: e.stoppedAt ?? e.lastSeenAt, failure: e.failure, state: .idle, entryID: e.id, server: nil, logPath: e.logPath))
     }
     return out
+  }
+
+  /// Running rows by project, the project with the newest server first. Servers with no project go last, under Other.
+  private func group(_ out: inout Rows) {
+    var groups: [ProjectGroup] = []
+    var other: [Row] = []
+    for r in out.running {
+      guard let p = r.project else { other.append(r); continue }
+      if let i = groups.firstIndex(where: { $0.tag.name == p.name }) { groups[i].rows.append(r) }
+      else { groups.append(ProjectGroup(tag: p, rows: [r])) }
+    }
+    guard !groups.isEmpty else { return }
+    if !other.isEmpty { groups.append(ProjectGroup(tag: ProjectTag(root: nil, name: "Other", tint: nil), rows: other)) }
+    out.groups = groups
+    out.running = groups.flatMap(\.rows)
+  }
+
+  // MARK: Projects
+
+  func projectName(_ root: String) -> String { projectNames[root] ?? Naming.projectName(root) }
+
+  private func tag(_ root: String?) -> ProjectTag? {
+    guard let root else { return nil }
+    let name = projectName(root)
+    // Before a colour is given out, a stable one from the name.
+    let tint = projectTints[name] ?? name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff } % Palette.tags.count
+    return ProjectTag(root: root, name: name, tint: tint)
+  }
+
+  /// Finds the project of entries that don't have one yet, such as ones saved before labels existed.
+  private func fillProjectRoots() -> Bool {
+    var changed = false
+    for e in history.entries where e.projectRoot == nil {
+      let root: String?
+      if let cached = rootCache[e.projectDir] { root = cached } else {
+        root = Naming.projectRoot(dir: e.projectDir, home: projectHome)
+        rootCache[e.projectDir] = root
+      }
+      guard let root else { continue }
+      history[e.id]?.projectRoot = root
+      changed = true
+    }
+    return changed
+  }
+
+  /// Gives each new project the colour fewest projects have, oldest project first.
+  private func assignTints() {
+    var names: [String] = []
+    for e in history.entries.sorted(by: { $0.startedAt < $1.startedAt }) {
+      if let root = e.projectRoot, case let n = projectName(root), !names.contains(n) { names.append(n) }
+    }
+    let missing = names.filter { projectTints[$0] == nil }
+    guard !missing.isEmpty else { return }
+    var used = Array(repeating: 0, count: Palette.tags.count)
+    for n in names { if let t = projectTints[n] { used[t % used.count] += 1 } }
+    var tints = projectTints
+    for n in missing {
+      let t = used.indices.min { used[$0] < used[$1] }!
+      tints[n] = t
+      used[t] += 1
+    }
+    projectTints = tints
+    UserDefaults.standard.set(tints, forKey: "projectTints")
+  }
+
+  /// Names every server in the project's folder. An empty name, or the folder's own, goes back to the folder's.
+  /// Two folders given one name share a group, and a new name keeps the old one's colour.
+  func renameProject(root: String, to newName: String) {
+    let old = projectName(root)
+    let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    projectNames[root] = name.isEmpty || name == Naming.projectName(root) ? nil : name
+    UserDefaults.standard.set(projectNames, forKey: "projectNames")
+    let new = projectName(root)
+    if new != old, projectTints[new] == nil, let t = projectTints[old] {
+      projectTints[new] = t
+      UserDefaults.standard.set(projectTints, forKey: "projectTints")
+    }
   }
 
   private func state(_ id: UUID) -> Row.State {
@@ -231,6 +347,11 @@ final class Model {
   func setShowAll(_ on: Bool) {
     showAll = on
     UserDefaults.standard.set(on, forKey: "showAll")
+  }
+
+  func setGroupByProject(_ on: Bool) {
+    groupByProject = on
+    UserDefaults.standard.set(on, forKey: "groupByProject")
   }
 
   func setHistoryLimit(_ n: Int) {
@@ -294,6 +415,8 @@ final class Model {
     if servers != found { servers = found }
     if links != result.links { links = result.links }
     var changed = result.changed
+    if fillProjectRoots() { changed = true }
+    assignTints()
 
     let linked = Set(result.links.values)
     for (id, b) in busy {

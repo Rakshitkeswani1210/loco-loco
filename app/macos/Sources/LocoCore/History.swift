@@ -6,6 +6,8 @@ public struct HistoryEntry: Codable, Sendable, Identifiable, Hashable {
   /// Set when the server is first seen and kept, so a restarted server keeps its row.
   public var name: String
   public var projectDir: String
+  /// The folder that names its project label (see `Naming.projectRoot`). Kept, so the label survives a deleted worktree.
+  public var projectRoot: String?
   /// What Restart runs, from `commandDir`, with `path` as PATH.
   public var command: String
   public var commandDir: String

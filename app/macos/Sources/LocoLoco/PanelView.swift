@@ -67,7 +67,15 @@ struct PanelRoot: View {
           .accessibilityAddTraits(.isButton)
           .accessibilityAction { model.perform(.more) }
       }
-      ForEach(rows.running) { RowView(row: $0, model: model) }
+      if let groups = rows.groups {
+        ForEach(groups) { g in
+          ProjectHeader(tag: g.tag)
+            .padding(.top, g.id == groups.first?.id ? 0 : Metrics.projectGap)
+          ForEach(g.rows) { RowView(row: $0, model: model, showProject: false) }
+        }
+      } else {
+        ForEach(rows.running) { RowView(row: $0, model: model) }
+      }
       if rows.running.isEmpty {
         SleepingOctopus()
           .stroke(Palette.tertiary, style: StrokeStyle(lineWidth: Metrics.octopusLine, lineCap: .round, lineJoin: .round))
@@ -114,9 +122,64 @@ struct GroupHeader<Trailing: View>: View {
   }
 }
 
+/// A project's tinted label. In rows it stops at a max width and ends in an ellipsis; headers show it whole.
+struct ProjectLabel: View {
+  let tag: ProjectTag
+  var capped = true
+
+  var body: some View {
+    let colors = tag.tint.map { Palette.tags[$0 % Palette.tags.count] } ?? Palette.greyTag
+    let label = Text(tag.name)
+      .font(.system(size: 11, weight: .medium))
+      .lineLimit(1)
+      .truncationMode(.tail)
+      .foregroundStyle(colors.ink)
+      .padding(.horizontal, Metrics.tagPadding)
+      .frame(height: Metrics.tagHeight)
+      .background(RoundedRectangle(cornerRadius: Metrics.tagRadius, style: .continuous).fill(colors.fill))
+    if capped { CapWidth(max: Metrics.tagMaxWidth) { label } } else { label.fixedSize() }
+  }
+}
+
+/// Offers its child no more than a max width and takes the child's own size, unlike `.frame(maxWidth:)`, which grows to the max.
+struct CapWidth: Layout {
+  let max: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    subviews.first?.sizeThatFits(capped(proposal)) ?? .zero
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+  }
+
+  private func capped(_ p: ProposedViewSize) -> ProposedViewSize {
+    ProposedViewSize(width: Swift.min(p.width ?? max, max), height: p.height)
+  }
+}
+
+/// Heads a project's servers when Running is grouped by project.
+struct ProjectHeader: View {
+  let tag: ProjectTag
+
+  var body: some View {
+    HStack(spacing: 0) {
+      ProjectLabel(tag: tag, capped: false)
+      Spacer(minLength: 0)
+    }
+    .padding(.horizontal, Metrics.rowInset)
+    .frame(height: Metrics.projectHeader)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(tag.name)
+    .accessibilityAddTraits(.isHeader)
+  }
+}
+
 struct RowView: View {
   let row: Row
   let model: Model
+  /// Off inside a project group, whose header already names it.
+  var showProject = true
 
   var body: some View {
     let highlighted = model.highlight == row.id
@@ -131,9 +194,18 @@ struct RowView: View {
         .truncationMode(.middle)
         .foregroundStyle(row.state == .idle ? Palette.label : Palette.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
-      trailing(showButtons: showButtons)
-        .fixedSize()
-        .padding(.leading, Metrics.trailGap)
+      if showProject, let project = row.project {
+        ProjectLabel(tag: project)
+          .padding(.leading, Metrics.tagGap)
+          .layoutPriority(1)
+      }
+      // At least the slot's width, so the label stays put when buttons replace the time. Longer text still fits.
+      ZStack(alignment: .trailing) {
+        Color.clear.frame(width: Metrics.trailWidth, height: 0)
+        trailing(showButtons: showButtons).fixedSize()
+      }
+      .fixedSize()
+      .padding(.leading, Metrics.trailGap)
     }
     .font(.system(size: 13))
     .padding(.horizontal, Metrics.rowInset)

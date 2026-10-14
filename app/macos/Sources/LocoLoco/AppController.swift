@@ -50,8 +50,11 @@ final class AppController: NSObject, NSWindowDelegate {
   private var monitor: Any?
   private var closedAt = Date.distantPast
   private var closing = false
-  /// Keeps the panel open while an alert is up.
-  private var holdOpen = 0
+  /// The panel's top edge while it's open. In a full-screen space the menu bar hides once the pointer leaves it,
+  /// so the panel keeps the place it opened at instead of following the bar off the screen.
+  private var pinnedTop: CGFloat?
+  /// Keeps the panel open while an alert is up. Test hooks also hold it open.
+  var holdOpen = 0
   /// The app that had focus before an alert activated Loco Loco; it gets focus back when the panel closes.
   private var returnFocusTo: NSRunningApplication?
 
@@ -123,6 +126,7 @@ final class AppController: NSObject, NSWindowDelegate {
   private func open() {
     model.resetPointer()
     model.isOpen = true
+    pinnedTop = nil
     layout()
     panel.alphaValue = 1
     panel.makeKeyAndOrderFront(nil)
@@ -173,10 +177,15 @@ final class AppController: NSObject, NSWindowDelegate {
     let rows = model.rows
     var height = Metrics.padding * 2 + Metrics.rowHeight * CGFloat(1 + rows.running.count)
     if rows.running.isEmpty { height += Metrics.emptyHeight }
+    if let groups = rows.groups {
+      height += Metrics.projectHeader * CGFloat(groups.count) + Metrics.projectGap * CGFloat(groups.count - 1)
+    }
     if rows.stoppedTotal > 0 {
       height += Metrics.groupGap + Metrics.rowHeight * CGFloat(1 + rows.stopped.count + (rows.hasMore ? 1 : 0))
     }
-    let top = barWindow.frame.minY - Metrics.gapBelowMenuBar
+    // A hidden menu bar sits above the screen, so the top never goes higher than a menu bar's height below it.
+    let top = pinnedTop ?? min(barWindow.frame.minY, screen.frame.maxY - NSStatusBar.system.thickness) - Metrics.gapBelowMenuBar
+    pinnedTop = top
     let maxHeight = top - screen.visibleFrame.minY - Metrics.gapBelowMenuBar
     let scrolls = height > maxHeight
     if model.scrolls != scrolls { model.scrolls = scrolls }
@@ -287,6 +296,12 @@ final class AppController: NSObject, NSWindowDelegate {
     menu.addItem(ActionItem("Show log", symbol: "doc.text", enabled: row.hasLog) { [weak self] in
       self?.showLog(row)
     })
+    if let project = row.project, let root = project.root {
+      menu.addItem(.separator())
+      menu.addItem(ActionItem("Rename project…", symbol: "pencil") { [weak self] in
+        self?.renameProject(root: root, name: project.name)
+      })
+    }
 
     let at: CGPoint
     if let point { at = point }
@@ -328,6 +343,12 @@ final class AppController: NSObject, NSWindowDelegate {
     }
     all.state = model.showAll ? .on : .off
     menu.addItem(all)
+    let group = ActionItem("Group by project") { [weak self] in
+      guard let self else { return }
+      self.model.setGroupByProject(!self.model.groupByProject)
+    }
+    group.state = model.groupByProject ? .on : .off
+    menu.addItem(group)
     menu.addItem(.separator())
     let keep = NSMenuItem(title: "Keep history", action: nil, keyEquivalent: "")
     let limits = NSMenu()
@@ -384,8 +405,19 @@ final class AppController: NSObject, NSWindowDelegate {
     }
   }
 
+  private func renameProject(root: String, name: String) {
+    let field = NSTextField(string: name)
+    field.frame = NSRect(x: 0, y: 0, width: 228, height: 22)
+    // Folders like "Acme " end in a space, which would read as a double space here.
+    let folder = Naming.abbreviate(root, home: NSHomeDirectory()).trimmingCharacters(in: .whitespaces)
+    let info = "Every server in \(folder) shows this name."
+    if alert("Rename project", info: info, action: "Rename", destructive: false, field: field) {
+      model.renameProject(root: root, to: field.stringValue)
+    }
+  }
+
   /// Shows an alert above the open panel. Returns true when the action button is chosen.
-  private func alert(_ title: String, info: String?, action: String?) -> Bool {
+  private func alert(_ title: String, info: String?, action: String?, destructive: Bool = true, field: NSTextField? = nil) -> Bool {
     holdOpen += 1
     defer { holdOpen -= 1 }
     panel.level = .floating
@@ -395,8 +427,13 @@ final class AppController: NSObject, NSWindowDelegate {
     a.messageText = title
     if let info { a.informativeText = info }
     if let action {
-      a.addButton(withTitle: action).hasDestructiveAction = true
+      a.addButton(withTitle: action).hasDestructiveAction = destructive
       a.addButton(withTitle: "Cancel")
+    }
+    if let field {
+      a.accessoryView = field
+      a.layout()
+      a.window.initialFirstResponder = field
     }
     let response = a.runModal()
     panel.level = .popUpMenu

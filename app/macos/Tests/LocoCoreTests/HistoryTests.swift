@@ -96,4 +96,20 @@ private func server(
     #expect(try String(contentsOf: url, encoding: .utf8).contains("procs") == false)
     #expect(History.load(from: url).count == 1)
   }
+
+  @Test func theProjectFolderIsSavedAndOptional() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("loco-test-\(UUID()).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    var e = HistoryEntry(server: server(root: 81, port: 3001, command: "x"), now: t0)
+    #expect(e.projectRoot == nil)
+    e.projectRoot = "/Users/me/Documents/Acme "
+    var h = History(entries: [e])
+    try h.save(to: url)
+    #expect(History.load(from: url).first?.projectRoot == "/Users/me/Documents/Acme ")
+    // Files saved before project labels have no projectRoot key.
+    h[e.id]?.projectRoot = nil
+    try h.save(to: url)
+    #expect(try String(contentsOf: url, encoding: .utf8).contains("projectRoot") == false)
+    #expect(History.load(from: url).first?.projectRoot == nil)
+  }
 }

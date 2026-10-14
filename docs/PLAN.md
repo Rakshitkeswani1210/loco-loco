@@ -47,7 +47,7 @@ What changed from Iteration 1:
 | 11 | Right-click: Open in browser, Copy URL, Restart, Stop, Show in Finder, Open in Terminal, Open in Cursor, Show log. |
 | 12 | Still running after 5 seconds: Force stop. |
 | 13 | After Stop all: "Nothing running". Stopped shows the 5 latest, and the rest sit under More. |
-| 14 | The ··· menu: Stop all…, Launch at login, Show count in menu bar, Show app and macOS servers, Keep history (10, 20 or 50 servers), Clear history…, Quit Loco Loco. |
+| 14 | The ··· menu: Stop all…, Launch at login, Show count in menu bar, Show app and macOS servers, Group by project, Keep history (10, 20 or 50 servers), Clear history…, Quit Loco Loco. |
 | 15 | Dark appearance. |
 
 **Rules every frame follows**
@@ -55,6 +55,17 @@ What changed from Iteration 1:
 - A busy row (stopping or starting) is dimmed and shows a spinner.
 - Long names are cut in the middle, the way Finder cuts file names, so they end before whatever is on the right: the time, a reason or the buttons. The help tag shows the full name and folder.
 - A row moves to its new section as soon as its server stops or starts. A row that slides under a still pointer shows no buttons until the pointer moves, so a second click can't stop the next server.
+
+## Projects (Iteration 3, Mac only)
+
+Each row shows which project it belongs to, so he knows where to look. Approved on Oct 14 from `projects-ui.png`: tinted labels, newest first, grouping as a toggle, rename allowed, panel 360pt.
+
+- The label sits before the time, right-aligned: 11pt medium, 18pt tall, 6pt side padding, 5pt corners, up to 104pt wide with a tail ellipsis. The time keeps at least 60pt, so labels line up from row to row and stay put when hover shows the buttons.
+- Five tints: blue, green, purple, orange and teal, with darker ink in light mode and lighter ink in dark mode so the text passes 4.5:1. Increase Contrast makes the tint 1.5 times stronger and pushes the inks further, so every label passes 6.5:1. A project gets the least-used tint the first time it shows up in history, and keeps it. From the sixth project on, tints repeat.
+- The project folder: a git worktree belongs to its main repo. Then it is the first folder below Documents, Desktop, Downloads or another folder that holds projects, else the first folder in the home folder. Loose servers in Documents itself, or outside the home folder, have no label. Trailing spaces in folder names are dropped from the label.
+- Running is sorted newest first. Stopped stays in the order servers stopped.
+- Group by project (··· menu, off by default): running servers sit under a 26pt header with the project's label, 4pt between groups. Rows inside a group drop their label. Groups follow their newest server. Servers with no project go last, under a grey "Other", which shows only when there is at least one project group. Arrow keys move through the rows and skip the headers.
+- Rename project… (last in the context menu): an alert with a text field. The new name applies to every server in that folder and keeps the tint. An empty name, or the folder's own name, goes back to the folder name. Renaming two folders to the same name puts them in one group.
 
 ## How it works
 
@@ -82,7 +93,7 @@ What changed from Iteration 1:
 ## Apple HIG, applied
 
 - A menu bar extra. Its panel is a solid surface, after Notion and Linear, instead of the system material. The context menu and the ··· menu are real NSMenus, so they keep Liquid Glass, the accent highlight, checkmarks, ⌘Q and the submenu chevron.
-- Panel: 320pt wide, 6pt padding, 28pt rows and headers, 8pt between the groups. Corners are concentric: 6pt rows inside a 12pt panel. Times, row buttons, Force stop and the ··· button all end 16pt from the panel's edge.
+- Panel: 360pt wide (320pt before project labels), 6pt padding, 28pt rows and headers, 8pt between the groups. Corners are concentric: 6pt rows inside a 12pt panel. Times, row buttons, Force stop and the ··· button all end 16pt from the panel's edge.
 - Menus, as measured on this Mac (macOS 26): 5pt padding, 24pt rows, 11pt separators, 8pt highlight corners. The context menu is 158pt wide, the ··· menu 269pt.
 - Text: SF Pro 13pt in rows, 12pt in headers (the group name semibold, the count regular). AppKit label colours. The secondary colour is a little darker than the system's so it passes 4.5:1 on white, and the failure reason uses the darker system red (#d70015, #ff453a in dark) for the same reason.
 - Sentence case everywhere ("Open in browser", "Force stop", "Stop all…"). The HIG asks for title case in menus and buttons; this follows Notion and Linear.
@@ -114,7 +125,7 @@ An octopus, so the app feels friendly rather than technical. Direction: Deep sea
 **Building and testing** (from `app/macos/`)
 - `scripts/build.sh` builds the release app, signs it locally, quits the running copy, installs it to `~/Applications` and opens it. `--no-install` stops after the build. It redraws the app icon with `scripts/make-icon.swift` when that file or `Octopus.swift` changes.
 - `scripts/test.sh` runs the LocoCore tests. With only the Command Line Tools, it points SwiftPM at their Testing framework.
-- `swift run loco-scan` prints the servers the app would list, from the same scanner.
+- `swift run loco-scan` prints the servers the app would list, from the same scanner, with each server's project. `swift run loco-scan project <folder>…` prints the project folder for any folder.
 - `scripts/build.sh --test-hooks` adds `TestHooks.swift`, which lets `build/loco-test` open the panel, hover, click and dump its state for screenshots. Don't keep that build installed.
 - Folder access: the first time Loco Loco restarts a server from Documents, Desktop or Downloads, macOS asks once. Click Allow. The restart waits for the answer, up to the 60 second limit. The app is signed locally, so macOS treats each rebuild as a new app and asks again.
 
@@ -135,6 +146,10 @@ Test servers ran from `/tmp/loco-site`, and a `--test-hooks` build drove the pan
 9. Light and dark, VoiceOver, keyboard only. Light, dark and keyboard passed. VoiceOver not run.
 
 Also checked: Force stop after 5 seconds, Stop all… and Clear history… (both answered Cancel), focus going back to the previous app after an alert, More with 6 and 7 stopped, the empty state, and frames 2 to 15 side by side with the app.
+
+Projects (Oct 14), checked the same way with test servers in a fake home folder, one process per server: labels in light and dark, labels holding still under hover, Stopped rows, grouping in light and dark with the right panel height, the grey Other group, Rename project… (typed name, tint kept, restart lands back in the renamed group), two folders renamed into one group and back, arrow keys skipping headers, and `loco-scan project` against the real Documents folder (worktrees, nested repos and loose folders). 19 unit tests pass.
+
+Fixed on the way: in a full-screen space the menu bar hides once the pointer leaves it, and the open panel used to follow it up by about 62pt, off the top of the screen. The panel now keeps the top it opened at, and never sits higher than a menu bar below the top of the screen. Checked in a normal space (no change in position); the full-screen case was not run, so no space was taken over while he worked.
 
 The octopus, checked the same way: the menu bar glyph awake and asleep (3pt to the count, as on the board), the empty state in light and dark with and without history, row icon sizes against the mockup, both alerts with the new icon, and the Finder icon on macOS 26.
 

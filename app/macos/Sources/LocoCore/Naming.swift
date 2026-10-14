@@ -138,6 +138,62 @@ public enum Naming {
     return (folder, markers.contains { exists(folder + "/" + $0) })
   }
 
+  /// Folders that hold projects rather than being one.
+  static let containers: Set<String> = [
+    "Documents", "Desktop", "Downloads", "Developer", "Projects", "projects", "Code", "code", "src", "dev", "repos", "GitHub", "Sites",
+  ]
+
+  public enum GitLink: Equatable, Sendable {
+    case repo
+    /// A linked worktree or submodule: its `.git` is a file pointing into another repo's `.git` folder.
+    case pointer(gitdir: String)
+  }
+
+  /// What the `.git` in a folder is, or nil when there is none.
+  public static func gitLink(in dir: String) -> GitLink? {
+    let path = dir + "/.git"
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return nil }
+    guard !isDir.boolValue, let text = try? String(contentsOfFile: path, encoding: .utf8),
+          let line = text.split(separator: "\n").first, line.hasPrefix("gitdir:") else { return .repo }
+    return .pointer(gitdir: line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces))
+  }
+
+  /// The folder that names a server's project label, like "~/Documents/Acme " for ~/Documents/Acme /web-lab.
+  /// A worktree belongs to its main repo. Then it is the first folder below Documents, Desktop, Downloads or
+  /// another folder that holds projects, else the first folder in the home folder.
+  /// Nil outside the home folder, in hidden folders and Library, and for loose files in a folder like Documents.
+  public static func projectRoot(dir: String, home: String, git: (String) -> GitLink? = gitLink(in:)) -> String? {
+    let homePrefix = home.hasSuffix("/") ? home : home + "/"
+    var base = dir
+    var d = dir
+    while d.hasPrefix(homePrefix) {
+      if let link = git(d) {
+        base = d
+        if case let .pointer(gitdir) = link {
+          let full = gitdir.hasPrefix("/") ? gitdir : d + "/" + gitdir
+          let path = URL(fileURLWithPath: full).standardized.path
+          if let r = path.range(of: "/.git/worktrees/") ?? path.range(of: "/.git/modules/"), path[..<r.lowerBound].hasPrefix(homePrefix) {
+            base = String(path[..<r.lowerBound])
+          }
+        }
+        break
+      }
+      d = (d as NSString).deletingLastPathComponent
+    }
+    guard base.hasPrefix(homePrefix) else { return nil }
+    let parts = base.dropFirst(homePrefix.count).split(separator: "/").map(String.init)
+    var i = 0
+    while i < parts.count, containers.contains(parts[i]) { i += 1 }
+    guard i < parts.count, !parts[i].hasPrefix("."), !(i == 0 && parts[0] == "Library") else { return nil }
+    return homePrefix + parts[...i].joined(separator: "/")
+  }
+
+  /// "Acme" for "~/Documents/Acme ".
+  public static func projectName(_ root: String) -> String {
+    (root as NSString).lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   /// A command line that runs argv again from zsh.
   public static func commandLine(_ argv: [String]) -> String {
     var args = argv

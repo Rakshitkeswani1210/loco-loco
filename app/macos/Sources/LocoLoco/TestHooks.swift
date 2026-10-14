@@ -3,7 +3,7 @@ import AppKit
 
 /// Drives the panel from the command line for screenshots and checks. Compiled in only by `scripts/build.sh --test-hooks`.
 /// Commands arrive as distributed notifications named `com.rakshit.locoloco.test` whose object is the command,
-/// such as `toggle`, `row 8765`, `btn stop`, `click` or `dump /tmp/state.json`.
+/// such as `toggle`, `row 8765`, `btn stop`, `click` or `dump /tmp/state.json`. `hold on` ignores outside clicks while you use the Mac.
 @MainActor
 final class TestHooks {
   private let controller: AppController
@@ -15,6 +15,8 @@ final class TestHooks {
   /// Open menus close by themselves after this many seconds, so a blocked main thread comes back.
   private var menuSeconds: TimeInterval = 4
   private var alertAnswer: NSApplication.ModalResponse?
+  /// Typed into the next alert's text field as soon as it opens.
+  private var alertText: String?
   /// The next menu that opens chooses the first item whose title starts with this, after a moment for a screenshot.
   private var pick: String?
   /// Focus, activation and outside clicks, newest last, so a panel that closes by itself can be explained.
@@ -47,7 +49,12 @@ final class TestHooks {
     // Answers alerts once they've been up for 2 seconds.
     let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated {
-        guard let self, let answer = self.alertAnswer, NSApp.modalWindow != nil else { return }
+        guard let self, let window = NSApp.modalWindow else { return }
+        if let text = self.alertText, let field = Self.textField(in: window.contentView) {
+          self.alertText = nil
+          field.stringValue = text
+        }
+        guard let answer = self.alertAnswer else { return }
         self.alertAnswer = nil
         self.after(2) { NSApp.stopModal(withCode: answer) }
       }
@@ -106,6 +113,9 @@ final class TestHooks {
     case "key" where a.count >= 2: key(UInt16(a[1]) ?? 0, command: a.contains("cmd"), characters: a.count > 2 && a[2] != "cmd" ? a[2] : "")
     case "menuSeconds" where a.count == 2: menuSeconds = Double(a[1]) ?? 4
     case "alert" where a.count == 2: alertAnswer = a[1] == "first" ? .alertFirstButtonReturn : .alertSecondButtonReturn
+    case "type" where a.count >= 1: alertText = a.dropFirst().joined(separator: " ")
+    case "hold" where a.count == 2: controller.holdOpen = a[1] == "on" ? 1 : 0
+    case "group" where a.count == 2: model.setGroupByProject(a[1] == "on")
     case "pick" where a.count >= 2: pick = a.dropFirst().joined(separator: " ")
     case "only" where a.count >= 2: model.onlyPorts = a[1] == "all" ? nil : Set(a.dropFirst().compactMap { UInt16($0) })
     case "appearance" where a.count == 2:
@@ -115,6 +125,13 @@ final class TestHooks {
     case "statusShot" where a.count == 2: statusShot(a[1])
     default: NSLog("Loco Loco test: unknown command %@", command)
     }
+  }
+
+  private static func textField(in view: NSView?) -> NSTextField? {
+    guard let view else { return nil }
+    if let field = view as? NSTextField, field.isEditable { return field }
+    for sub in view.subviews { if let f = textField(in: sub) { return f } }
+    return nil
   }
 
   /// Renders the status item button as AppKit draws it, for when the menu bar is hidden.
@@ -170,13 +187,15 @@ final class TestHooks {
     let rows = model.rows
     func json(_ r: Row) -> [String: Any] {
       ["id": r.id, "group": r.group == .running ? "running" : "stopped", "port": Int(r.port), "name": r.name,
-       "state": "\(r.state)", "failure": r.failure ?? "", "time": TimeText.short(r.time), "actions": r.actions.map(\.rawValue)]
+       "state": "\(r.state)", "failure": r.failure ?? "", "time": TimeText.short(r.time), "actions": r.actions.map(\.rawValue),
+       "project": r.project?.name ?? "", "tint": r.project?.tint ?? -1]
     }
     let f = panel.frame
     let state: [String: Any] = [
       "visible": panel.isVisible, "key": panel.isKeyWindow, "frame": [f.minX, f.minY, f.width, f.height],
       "statusTitle": controller.statusItem.button?.title ?? "",
       "running": rows.running.map(json), "stopped": rows.stopped.map(json), "stoppedTotal": rows.stoppedTotal,
+      "groups": (rows.groups ?? []).map { ["name": $0.tag.name, "tint": $0.tag.tint ?? -1, "ports": $0.rows.map { Int($0.port) }] },
       "highlight": model.highlight ?? "", "hot": model.hot ?? "", "stale": model.staleUnderPointer,
       "expanded": model.expanded, "scrolls": model.scrolls,
       "frames": model.frames.mapValues { [$0.minX, $0.minY, $0.width, $0.height] },

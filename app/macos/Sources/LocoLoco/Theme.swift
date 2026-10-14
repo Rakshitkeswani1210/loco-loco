@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Sizes from the approved mockup (docs/flow/iteration-2). Corners are concentric: 6pt rows inside 6pt padding make a 12pt panel.
+/// Sizes from the approved mockups (docs/flow/iteration-2 and iteration-3). Corners are concentric: 6pt rows inside 6pt padding make a 12pt panel.
 enum Metrics {
-  static let width: CGFloat = 320
+  static let width: CGFloat = 360
   static let padding: CGFloat = 6
   static let radius: CGFloat = 12
   static let rowHeight: CGFloat = 28
@@ -12,6 +12,17 @@ enum Metrics {
   static let rowInset: CGFloat = 10
   static let portWidth: CGFloat = 44
   static let trailGap: CGFloat = 12
+  /// The time and the hover buttons share this slot, so a project label doesn't move on hover.
+  static let trailWidth: CGFloat = 60
+  /// Project label: 11pt medium text on a tint, ellipsized past the max width.
+  static let tagHeight: CGFloat = 18
+  static let tagPadding: CGFloat = 6
+  static let tagRadius: CGFloat = 5
+  static let tagGap: CGFloat = 8
+  static let tagMaxWidth: CGFloat = 104
+  /// Group by project: a project label heads each group in Running.
+  static let projectHeader: CGFloat = 26
+  static let projectGap: CGFloat = 4
   static let buttonHeight: CGFloat = 22
   /// Row action buttons share one width, so their icons line up across rows.
   static let actionWidth: CGFloat = 21.5
@@ -56,6 +67,33 @@ enum Palette {
   static let innerRing = make(black(0), white(0.1), contrast: (black(0), white(0.4)))
   static let buttonRing = make(black(0.2), white(0.16), contrast: (black(0.5), white(0.4)))
   static let buttonShadow = make(black(0.06), black(0))
+
+  /// Project label colours: Apple's increased-contrast system inks on a soft tint. No red, since red means failed here.
+  struct Tag {
+    let ink: Color
+    let fill: Color
+  }
+  private static func rgba(_ v: UInt32, _ a: CGFloat) -> NSColor { hex(v).withAlphaComponent(a) }
+  /// `v` moved a fraction `a` of the way to black (0) or white (1), in sRGB.
+  private static func mix(_ v: UInt32, toward t: CGFloat, _ a: CGFloat) -> NSColor {
+    func c(_ shift: UInt32) -> CGFloat { CGFloat(v >> shift & 0xff) / 255 * (1 - a) + t * a }
+    return NSColor(srgbRed: c(16), green: c(8), blue: c(0), alpha: 1)
+  }
+  private static func tag(light: (UInt32, UInt32, CGFloat), dark: (UInt32, UInt32, CGFloat)) -> Tag {
+    // Increased contrast: a stronger tint, and inks pushed away from it, so every label stays above 6.5:1.
+    Tag(ink: make(hex(light.0), hex(dark.0), contrast: (mix(light.0, toward: 0, 0.3), mix(dark.0, toward: 1, 0.6))),
+        fill: make(rgba(light.1, light.2), rgba(dark.1, dark.2), contrast: (rgba(light.1, light.2 * 1.5), rgba(dark.1, dark.2 * 1.5))))
+  }
+  /// Blue, green, purple, orange, teal.
+  static let tags: [Tag] = [
+    tag(light: (0x0040dd, 0x007aff, 0.12), dark: (0x5eaaff, 0x0a84ff, 0.22)),
+    tag(light: (0x1f7a36, 0x34c759, 0.16), dark: (0x4ade7b, 0x30d158, 0.18)),
+    tag(light: (0x8944ab, 0xaf52de, 0.13), dark: (0xda8fff, 0xbf5af2, 0.24)),
+    tag(light: (0xb83000, 0xff9500, 0.16), dark: (0xffb340, 0xff9f0a, 0.2)),
+    tag(light: (0x00668f, 0x30b0c7, 0.16), dark: (0x5de6ff, 0x40c8e0, 0.18)),
+  ]
+  /// Other, for servers with no project.
+  static let greyTag = Tag(ink: secondary, fill: make(black(0.06), white(0.1), contrast: (black(0.12), white(0.2))))
 }
 
 enum TimeText {

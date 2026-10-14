@@ -7,6 +7,7 @@ import LocoCore
 //   loco-scan stop <port>             stop a server the way the Stop button does
 //   loco-scan run <dir> <command>     start a command the way Restart does, and wait for its port
 //   loco-scan history <file>          reconcile a scan with a history file, print and save it
+//   loco-scan project <dir> ...       the project label each folder gets
 var argv = Array(CommandLine.arguments.dropFirst())
 let home = NSHomeDirectory()
 
@@ -17,6 +18,7 @@ func list(_ servers: [Server]) {
     let ports = s.ports.map(String.init).joined(separator: ",")
     print("\(ports.padding(toLength: 12, withPad: " ", startingAt: 0)) \(s.name.padding(toLength: 34, withPad: " ", startingAt: 0)) \(fmt.string(from: s.startedAt))  root \(s.root.pid)  procs \(s.processes.count)\(s.isDevServer ? "" : "  [app/system]")")
     print("    folder   \(Naming.abbreviate(s.projectDir, home: home))")
+    if s.isDevServer { print("    project  \(Naming.projectRoot(dir: s.projectDir, home: home).map(Naming.projectName) ?? "none")") }
     print("    command  \(s.command.prefix(160))")
     print("    in       \(Naming.abbreviate(s.commandDir, home: home))   PATH \(s.path == nil ? "missing" : "\(s.path!.split(separator: ":").count) entries")")
   }
@@ -70,6 +72,12 @@ case "history":
   print("changed \(r.changed), \(r.links.count) linked")
   for e in history.entries.sorted(by: { ($0.isRunning ? 0 : 1, $0.port) < ($1.isRunning ? 0 : 1, $1.port) }) {
     print("\(e.isRunning ? "running" : "stopped") \(e.port) \(e.name) \(e.failure ?? "")")
+  }
+
+case "project":
+  for dir in argv.dropFirst() {
+    let root = Naming.projectRoot(dir: dir, home: home)
+    print("\(Naming.abbreviate(dir, home: home))  ->  \(root.map { "\(Naming.projectName($0))  (\(Naming.abbreviate($0, home: home)))" } ?? "none")")
   }
 
 default:

@@ -42,6 +42,7 @@ It records how each server was started (folder + command), so Restart works even
 - Menu bar only (no Dock icon), launch at login. On Windows: notification area only (no taskbar button), Start with Windows, and a right-click menu on the icon.
 - Can only see and stop processes owned by the current user.
 - Settings live in the ··· menu; there is no Settings window.
+- Mac: each row carries a tinted project label (first folder in Documents and the like; worktrees follow their main repo), "Group by project" in the ··· menu groups running servers, and "Rename project…" in the context menu renames a project. Not yet on Windows.
 - Decided: name Loco Loco; count next to the icon (can be turned off); Stop all… with one confirmation; 20 servers of history (10, 20 or 50); Open in Terminal and Open in Cursor.
 
 ## Brand Commitments
