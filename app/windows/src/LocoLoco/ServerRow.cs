@@ -303,15 +303,12 @@ static class EmptyState
             Height = Metrics.Empty, Padding = new Thickness(0, 16, 0, 18), Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        // Both sizes, from the drawing's own shape: in a StackPanel a stretched shape gets no width and draws nothing.
-        var data = Geometry();
-        var bounds = data.Bounds;
-        const double height = 34;
+        // Scaled here rather than with Stretch, which drew nothing on Windows.
+        var (data, width) = Geometry(Size, Stroke);
         var path = new Microsoft.UI.Xaml.Shapes.Path
         {
-            Data = data, Stretch = Stretch.Uniform, Height = height,
-            Width = bounds.Height > 0 ? Math.Ceiling(height * bounds.Width / bounds.Height) : height,
-            Stroke = p.Tertiary, StrokeThickness = 1.5,
+            Data = data, Width = width, Height = Size,
+            Stroke = p.Tertiary, StrokeThickness = Stroke,
             StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
@@ -324,20 +321,27 @@ static class EmptyState
         return panel;
     }
 
-    static Point P(Pt p) => new(p.X, p.Y);
+    const double Size = 34, Stroke = 1.5;
 
-    static PathGeometry Geometry()
+    /// <summary>The line octopus with closed eyes, fitted to the given height, and its width.</summary>
+    static (PathGeometry Data, double Width) Geometry(double height, double stroke)
     {
+        var curves = new List<IReadOnlyList<Art.Cubic>> { Octo.LineOuter };
+        curves.AddRange(Octo.LineInner);
+        var eyes = Octo.SleepingEyes(52, 20, 4);
+        var all = curves.SelectMany(cs => cs.SelectMany(c => new[] { c.P0, c.P1, c.P2, c.P3 })).Concat(eyes.SelectMany(e => e)).ToList();
+        double x0 = all.Min(q => q.X), y0 = all.Min(q => q.Y), x1 = all.Max(q => q.X), y1 = all.Max(q => q.Y);
+        double k = (height - stroke) / (y1 - y0);
+        Point P(Pt q) => new((q.X - x0) * k + stroke / 2, (q.Y - y0) * k + stroke / 2);
+
         var g = new PathGeometry();
-        void Curves(IReadOnlyList<Art.Cubic> cs)
+        foreach (var cs in curves)
         {
             var f = new PathFigure { StartPoint = P(cs[0].P0), IsClosed = false, IsFilled = false };
             foreach (var c in cs) f.Segments.Add(new BezierSegment { Point1 = P(c.P1), Point2 = P(c.P2), Point3 = P(c.P3) });
             g.Figures.Add(f);
         }
-        Curves(Octo.LineOuter);
-        foreach (var arm in Octo.LineInner) Curves(arm);
-        foreach (var eye in Octo.SleepingEyes(52, 20, 4))
+        foreach (var eye in eyes)
         {
             var f = new PathFigure { StartPoint = P(eye[0]), IsClosed = false, IsFilled = false };
             var line = new PolyLineSegment();
@@ -345,6 +349,6 @@ static class EmptyState
             f.Segments.Add(line);
             g.Figures.Add(f);
         }
-        return g;
+        return (g, Math.Ceiling((x1 - x0) * k + stroke));
     }
 }

@@ -161,6 +161,8 @@ static class TestHooks
             await Until(() => flyout.Rows.Running.Count == 0, 30, "every server to stop", flyout, engine);
             await Task.Delay(400);
             await Capture(dir, "09-empty", flyout);
+            foreach (var shape in Descendants(flyout.Root).OfType<Microsoft.UI.Xaml.Shapes.Path>())
+                Note($"empty octopus {shape.ActualWidth:0}x{shape.ActualHeight:0}");
 
             var again = flyout.Rows.Stopped.FirstOrDefault(r => r.CanRestart) ?? throw new InvalidOperationException("Nothing to restart.");
             Note($"restarting {again.Name}");
@@ -240,6 +242,16 @@ static class TestHooks
         bool blank = pixels.Length == 0 || pixels.Where((_, i) => i % 4 != 3).All(b => b == 0);
         if (!blank) File.WriteAllBytes(Path.Combine(dir, name + ".png"), Png.Encode(r.Width, r.Height, pixels));
         if (xaml || blank) await CaptureXaml(dir, name + (blank ? ".png" : "-xaml.png"), flyout.Root);
+    }
+
+    static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
+    {
+        for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+            yield return child;
+            foreach (var d in Descendants(child)) yield return d;
+        }
     }
 
     /// <summary>The panel as XAML drew it, without the desktop. Works even where screen capture doesn't.</summary>
