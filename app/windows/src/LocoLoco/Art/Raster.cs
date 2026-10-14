@@ -8,6 +8,9 @@ public readonly record struct Rgba(double R, double G, double B, double A = 1)
     /// <summary>Black or white, whichever reads better on this colour.</summary>
     public Rgba Ink => 0.2126 * Lin(R) + 0.7152 * Lin(G) + 0.0722 * Lin(B) > 0.36 ? new(0, 0, 0) : new(1, 1, 1);
     static double Lin(double c) => c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+    /// <summary>#RRGGBBAA. The generated one would print Ink, an Rgba with its own Ink, without end.</summary>
+    public override string ToString() => $"#{Byte(R):X2}{Byte(G):X2}{Byte(B):X2}{Byte(A):X2}";
+    static int Byte(double c) => (int)Math.Round(Math.Clamp(c, 0, 1) * 255);
 }
 
 /// <summary>A shape as a signed distance in pixels: negative inside. Each shape keeps its bounding box so far pixels skip it.</summary>

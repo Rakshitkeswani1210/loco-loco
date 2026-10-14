@@ -10,6 +10,9 @@ public readonly record struct Pt(double X, double Y)
 
 public readonly record struct Cubic(Pt P0, Pt P1, Pt P2, Pt P3)
 {
+    // The generated one would print Mirrored, a Cubic with its own Mirrored, without end.
+    public override string ToString() => $"Cubic({P0}, {P1}, {P2}, {P3})";
+
     public Pt At(double t)
     {
         double u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
