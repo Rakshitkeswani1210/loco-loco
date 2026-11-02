@@ -80,6 +80,14 @@ public struct History: Sendable {
     entries.removeAll { !$0.isRunning && !keep.contains($0.id) }
   }
 
+  /// Removes one stopped entry. A running entry stays. Returns whether it was removed.
+  @discardableResult
+  public mutating func removeStopped(_ id: UUID) -> Bool {
+    guard let i = entries.firstIndex(where: { $0.id == id }), !entries[i].isRunning else { return false }
+    entries.remove(at: i)
+    return true
+  }
+
   /// Links each scanned dev server to an entry and records the ones that stopped.
   ///
   /// A server matches an entry by its root process (pid and start time), then by a pid Loco Loco

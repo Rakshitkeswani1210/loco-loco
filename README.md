@@ -34,12 +34,15 @@ To update, quit Loco Loco and unzip the new version over the old folder.
 ## Use
 
 - Click the octopus to see Running and Stopped.
+- Or press ⌃⌥L in any app to open Loco Loco in the middle of the screen. Press it again, or Esc, to close. To change it or turn it off, open Settings.
 - Click a running row to open it in the browser. Hover it to stop it.
 - Hover a stopped row to restart it. It runs the same command in the same folder, in the background.
 - Right-click a row for Copy URL, Show in Finder (File Explorer on Windows), Open in Terminal, Show log, and Open in Cursor if you have Cursor.
+- To forget a stopped server, right-click it and choose Remove from history, or select it with the arrow keys and press ⌘⌫. Clear history… in the ··· menu forgets them all.
 - On the Mac, each row shows its project in a coloured label. The project is the first folder in Documents, Desktop or Downloads (or in your home folder), and a git worktree shows the project of its main repo. Right-click a row and choose Rename project… to give it a shorter name.
-- The ··· menu has Stop all, Launch at login (Start with Windows) and the other settings. On the Mac, Group by project puts running servers under a header for each project.
-- On Windows, right-click the octopus for Open Loco Loco, Stop all… and Quit Loco Loco.
+- On the Mac, the ··· menu has Stop all…, Clear history…, Settings… (⌘,) and Quit.
+- Settings has Launch at login, the menu bar count, which servers to show, Group by project (puts running servers under a header for each project), Appearance (System, Light or Dark), Transparent background (Liquid Glass), the keyboard shortcut and how much history to keep.
+- On Windows, the ··· menu has Stop all, Start with Windows and the other settings, and right-clicking the octopus gives Open Loco Loco, Stop all… and Quit Loco Loco.
 
 Loco Loco lists processes that listen on a port and run from a folder inside your home folder, so apps like Figma stay hidden. It can only see and stop your own processes.
 

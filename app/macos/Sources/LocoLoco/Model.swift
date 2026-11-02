@@ -1,11 +1,12 @@
 import AppKit
 import LocoCore
 import Observation
+import ServiceManagement
 
 enum RowGroup: Sendable { case running, stopped }
 
 enum RowAction: String, Sendable {
-  case stop, restart, log, force
+  case stop, restart, log, force, remove
 
   var symbol: String {
     switch self {
@@ -13,6 +14,7 @@ enum RowAction: String, Sendable {
     case .restart: "arrow.clockwise"
     case .log: "doc.text"
     case .force: "xmark.octagon"
+    case .remove: "trash"
     }
   }
 
@@ -25,6 +27,7 @@ enum RowAction: String, Sendable {
     case .restart: "Restart"
     case .log: "Show log"
     case .force: "Force stop"
+    case .remove: "Remove from history"
     }
   }
 }
@@ -68,6 +71,7 @@ struct Row: Identifiable, Equatable {
   var hasLog: Bool { logPath.map { FileManager.default.fileExists(atPath: $0) } ?? false }
   var canStop: Bool { group == .running && entryID != nil && server != nil && state == .idle }
   var canRestart: Bool { entryID != nil && state == .idle && (group == .stopped || server != nil) }
+  var canRemove: Bool { group == .stopped && entryID != nil && state == .idle }
 
   /// The buttons that take the place of the time on hover.
   var actions: [RowAction] {
@@ -123,7 +127,20 @@ enum Command {
   case action(String, RowAction)
   case menu(String, CGPoint?)
   case more
+  case settings
   case close
+}
+
+enum Appearance: String, CaseIterable {
+  case system, light, dark
+
+  var title: String {
+    switch self {
+    case .system: "System"
+    case .light: "Light"
+    case .dark: "Dark"
+    }
+  }
 }
 
 @MainActor @Observable
@@ -143,6 +160,13 @@ final class Model {
   private(set) var projectNames: [String: String]
   /// Label colours by project name, given out in the order projects first appear.
   private(set) var projectTints: [String: Int]
+  /// Opens the panel in the middle of the screen from any app. Nil when turned off.
+  private(set) var shortcut: Shortcut?
+  private(set) var appearance: Appearance
+  /// The panel shows what's behind it through glass instead of a solid surface.
+  private(set) var transparent: Bool
+  /// Read from macOS, which the user can change in System Settings too.
+  private(set) var launchAtLogin = false
 
   // MARK: Servers and history
 
@@ -200,13 +224,19 @@ final class Model {
 
   init() {
     let d = UserDefaults.standard
-    d.register(defaults: ["showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false])
+    d.register(defaults: [
+      "showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false, "shortcut": Shortcut.standard.storage,
+      "appearance": Appearance.system.rawValue, "transparent": false,
+    ])
     showCount = d.bool(forKey: "showCount")
     showAll = d.bool(forKey: "showAll")
     historyLimit = d.integer(forKey: "historyLimit")
     groupByProject = d.bool(forKey: "groupByProject")
     projectNames = d.dictionary(forKey: "projectNames") as? [String: String] ?? [:]
     projectTints = d.dictionary(forKey: "projectTints") as? [String: Int] ?? [:]
+    shortcut = Shortcut(storage: d.string(forKey: "shortcut") ?? "")
+    appearance = Appearance(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
+    transparent = d.bool(forKey: "transparent")
     history = History(entries: History.load(), limit: d.integer(forKey: "historyLimit"))
   }
 
@@ -354,6 +384,32 @@ final class Model {
     UserDefaults.standard.set(on, forKey: "groupByProject")
   }
 
+  /// Saves an empty string for none, so the ⌃⌥L default doesn't come back.
+  func setShortcut(_ s: Shortcut?) {
+    shortcut = s
+    UserDefaults.standard.set(s?.storage ?? "", forKey: "shortcut")
+  }
+
+  func setAppearance(_ a: Appearance) {
+    appearance = a
+    UserDefaults.standard.set(a.rawValue, forKey: "appearance")
+  }
+
+  func setTransparent(_ on: Bool) {
+    transparent = on
+    UserDefaults.standard.set(on, forKey: "transparent")
+  }
+
+  func refreshLaunchAtLogin() {
+    let on = SMAppService.mainApp.status == .enabled
+    if launchAtLogin != on { launchAtLogin = on }
+  }
+
+  func setLaunchAtLogin(_ on: Bool) throws {
+    defer { refreshLaunchAtLogin() }
+    if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+  }
+
   func setHistoryLimit(_ n: Int) {
     historyLimit = n
     UserDefaults.standard.set(n, forKey: "historyLimit")
@@ -365,6 +421,20 @@ final class Model {
   func clearHistory() {
     history.clearStopped(keeping: Set(busy.keys))
     expanded = false
+    save()
+  }
+
+  /// Forgets one stopped server, so it can't be restarted from here. Its log stays, as with Clear history.
+  /// From the keyboard, the highlight moves to the stopped row that takes its place, never to a running one.
+  func remove(_ id: UUID) {
+    let before = rows.stopped.map(\.id)
+    guard busy[id] == nil, history.removeStopped(id) else { return }
+    if history.stopped.isEmpty { expanded = false }
+    if keyboardDriven, highlight == id.uuidString {
+      let after = rows.stopped.map(\.id)
+      let i = before.firstIndex(of: id.uuidString) ?? 0
+      highlight = after.isEmpty ? nil : after[min(i, after.count - 1)]
+    }
     save()
   }
 

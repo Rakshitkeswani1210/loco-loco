@@ -1,3 +1,4 @@
+import AppKit
 import LocoCore
 import SwiftUI
 
@@ -39,12 +40,26 @@ struct PanelRoot: View {
     .frame(width: Metrics.width)
     .frame(maxHeight: .infinity, alignment: .top)
     .background {
-      shape.fill(Palette.surface)
-        .overlay(shape.strokeBorder(Palette.innerRing, lineWidth: 0.5))
-        .background(
-          RoundedRectangle(cornerRadius: Metrics.radius + 0.5, style: .continuous)
-            .fill(Palette.outerRing)
-            .padding(-0.5))
+      if model.transparent {
+        PanelMaterial()
+          .overlay {
+            // Glass draws its own edge.
+            if !PanelMaterial.isGlass {
+              shape.strokeBorder(Palette.innerRing, lineWidth: 0.5)
+                .background(
+                  RoundedRectangle(cornerRadius: Metrics.radius + 0.5, style: .continuous)
+                    .strokeBorder(Palette.outerRing, lineWidth: 0.5)
+                    .padding(-0.5))
+            }
+          }
+      } else {
+        shape.fill(Palette.surface)
+          .overlay(shape.strokeBorder(Palette.innerRing, lineWidth: 0.5))
+          .background(
+            RoundedRectangle(cornerRadius: Metrics.radius + 0.5, style: .continuous)
+              .fill(Palette.outerRing)
+              .padding(-0.5))
+      }
     }
     .padding(Metrics.margin)
     .coordinateSpace(.named(Self.space))
@@ -225,6 +240,7 @@ struct RowView: View {
       if row.canRestart { Button("Restart") { model.perform(.action(row.id, .restart)) } }
       if row.state == .force { Button("Force stop") { model.perform(.action(row.id, .force)) } }
       if row.hasLog { Button("Show log") { model.perform(.action(row.id, .log)) } }
+      if row.canRemove { Button(RowAction.remove.title) { model.perform(.action(row.id, .remove)) } }
       Button("Show menu") { model.perform(.menu(row.id, nil)) }
     }
   }
@@ -348,4 +364,44 @@ struct Spinner: View {
     .foregroundStyle(Palette.secondary)
     .accessibilityHidden(true)
   }
+}
+
+/// The transparent background: Liquid Glass on macOS 26, the menu's blur before it.
+struct PanelMaterial: NSViewRepresentable {
+  static var isGlass: Bool {
+    if #available(macOS 26.0, *) { true } else { false }
+  }
+
+  func makeNSView(context: Context) -> NSView {
+    if #available(macOS 26.0, *) {
+      // Glass casts a faint shadow past its edges. Left in, it fills the window's corners and macOS gives the
+      // window a square shadow and outline, so clip it to the panel's shape.
+      let clip = NSView()
+      clip.wantsLayer = true
+      clip.layer?.cornerRadius = Metrics.radius
+      clip.layer?.cornerCurve = .continuous
+      clip.layer?.masksToBounds = true
+      let glass = NSGlassEffectView(frame: clip.bounds)
+      glass.cornerRadius = Metrics.radius
+      glass.autoresizingMask = [.width, .height]
+      clip.addSubview(glass)
+      return clip
+    }
+    let blur = NSVisualEffectView()
+    blur.material = .menu
+    blur.blendingMode = .behindWindow
+    blur.state = .active
+    let r = Metrics.radius
+    let mask = NSImage(size: NSSize(width: r * 2 + 1, height: r * 2 + 1), flipped: false) { rect in
+      NSColor.black.setFill()
+      NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill()
+      return true
+    }
+    mask.capInsets = NSEdgeInsets(top: r, left: r, bottom: r, right: r)
+    mask.resizingMode = .stretch
+    blur.maskImage = mask
+    return blur
+  }
+
+  func updateNSView(_ view: NSView, context: Context) {}
 }
