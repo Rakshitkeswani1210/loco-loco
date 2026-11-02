@@ -39,28 +39,7 @@ struct PanelRoot: View {
     }
     .frame(width: Metrics.width)
     .frame(maxHeight: .infinity, alignment: .top)
-    .background {
-      if model.transparent {
-        PanelMaterial()
-          .overlay {
-            // Glass draws its own edge.
-            if !PanelMaterial.isGlass {
-              shape.strokeBorder(Palette.innerRing, lineWidth: 0.5)
-                .background(
-                  RoundedRectangle(cornerRadius: Metrics.radius + 0.5, style: .continuous)
-                    .strokeBorder(Palette.outerRing, lineWidth: 0.5)
-                    .padding(-0.5))
-            }
-          }
-      } else {
-        shape.fill(Palette.surface)
-          .overlay(shape.strokeBorder(Palette.innerRing, lineWidth: 0.5))
-          .background(
-            RoundedRectangle(cornerRadius: Metrics.radius + 0.5, style: .continuous)
-              .fill(Palette.outerRing)
-              .padding(-0.5))
-      }
-    }
+    .background { PanelSurface(transparent: model.transparent) }
     .padding(Metrics.margin)
     .coordinateSpace(.named(Self.space))
     .onPreferenceChange(FrameKey.self) { frames in
@@ -84,7 +63,7 @@ struct PanelRoot: View {
       }
       if let groups = rows.groups {
         ForEach(groups) { g in
-          ProjectHeader(tag: g.tag)
+          ProjectHeader(group: g, model: model)
             .padding(.top, g.id == groups.first?.id ? 0 : Metrics.projectGap)
           ForEach(g.rows) { RowView(row: $0, model: model, showProject: false) }
         }
@@ -102,15 +81,57 @@ struct PanelRoot: View {
       if rows.stoppedTotal > 0 {
         GroupHeader(title: "Stopped", count: rows.stoppedTotal) { EmptyView() }
           .padding(.top, Metrics.groupGap)
-        ForEach(rows.stopped) { RowView(row: $0, model: model) }
+        ForEach(rows.stoppedItems) { item in
+          switch item {
+          case .row(let r):
+            RowView(row: r, model: model)
+          case .line(let line):
+            ProjectLineView(line: line, model: model)
+            ForEach(line.rows) { RowView(row: $0, model: model, showProject: false) }
+            if line.hidden > 0 {
+              MoreRow(id: line.moreID, highlighted: model.highlight == line.moreID, hidden: line.hidden) {
+                model.perform(.primary(line.moreID))
+              }
+            }
+          }
+        }
         if rows.hasMore {
-          MoreRow(highlighted: model.highlight == Rows.more, hidden: rows.stoppedTotal - rows.stopped.count) {
+          MoreRow(id: Rows.more, highlighted: model.highlight == Rows.more, hidden: rows.hiddenServers) {
             model.perform(.primary(Rows.more))
           }
         }
       }
     }
     .padding(Metrics.padding)
+  }
+}
+
+/// The panel's surface: solid with two hairlines, or glass when Transparent background is on. The preview card shares it.
+struct PanelSurface: View {
+  let transparent: Bool
+
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous)
+    if transparent {
+      PanelMaterial()
+        .overlay {
+          // Glass draws its own edge.
+          if !PanelMaterial.isGlass {
+            shape.strokeBorder(Palette.innerRing, lineWidth: 0.5)
+              .background(
+                RoundedRectangle(cornerRadius: Metrics.radius + 0.5, style: .continuous)
+                  .strokeBorder(Palette.outerRing, lineWidth: 0.5)
+                  .padding(-0.5))
+          }
+        }
+    } else {
+      shape.fill(Palette.surface)
+        .overlay(shape.strokeBorder(Palette.innerRing, lineWidth: 0.5))
+        .background(
+          RoundedRectangle(cornerRadius: Metrics.radius + 0.5, style: .continuous)
+            .fill(Palette.outerRing)
+            .padding(-0.5))
+    }
   }
 }
 
@@ -173,20 +194,94 @@ struct CapWidth: Layout {
   }
 }
 
-/// Heads a project's servers when Running is grouped by project.
+/// Heads a project's servers when Running is grouped by project. On hover, Stop stops them all.
 struct ProjectHeader: View {
-  let tag: ProjectTag
+  let group: ProjectGroup
+  let model: Model
 
   var body: some View {
+    let id = group.headerID
+    let canStop = id != nil && group.rows.contains(where: \.canStop)
+    let highlighted = id != nil && model.highlight == id && model.menuRow != id
     HStack(spacing: 0) {
-      ProjectLabel(tag: tag, capped: false)
+      ProjectLabel(tag: group.tag, capped: false)
       Spacer(minLength: 0)
+      if highlighted, canStop, let id {
+        let button = "btn:\(id):stop"
+        IconButton(symbol: RowAction.stop.symbol, size: RowAction.stop.symbolSize, width: Metrics.actionWidth, hot: model.hot == button)
+          .frameID(button)
+          .padding(.trailing, -5)
+      }
     }
     .padding(.horizontal, Metrics.rowInset)
     .frame(height: Metrics.projectHeader)
+    .background {
+      if highlighted { RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover) }
+    }
+    .modifier(FrameIDIf(id: id.map { "row:" + $0 }))
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(tag.name)
+    .accessibilityLabel(group.tag.name)
     .accessibilityAddTraits(.isHeader)
+    .accessibilityActions {
+      if canStop, let id { Button("Stop all in \(group.tag.name)") { model.perform(.action(id, .stop)) } }
+    }
+  }
+}
+
+private struct FrameIDIf: ViewModifier {
+  let id: String?
+  func body(content: Content) -> some View {
+    if let id { content.frameID(id) } else { content }
+  }
+}
+
+/// Two or more stopped servers from one project, drawn like a Running project header: its label at the left edge,
+/// the count and a chevron after it. Click to list them; on hover, Restart starts them all.
+struct ProjectLineView: View {
+  let line: ProjectLine
+  let model: Model
+
+  var body: some View {
+    let highlighted = model.highlight == line.id && model.menuRow != line.id
+    HStack(spacing: 0) {
+      HStack(spacing: 6) {
+        ProjectLabel(tag: line.tag, capped: false)
+        Text(verbatim: "\(line.count)").monospacedDigit().font(.system(size: 12)).foregroundStyle(Palette.secondary)
+        Image(systemName: "chevron.right")
+          .font(.system(size: 9, weight: .semibold))
+          .foregroundStyle(Palette.secondary)
+          .rotationEffect(.degrees(line.open ? 90 : 0))
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      ZStack(alignment: .trailing) {
+        Color.clear.frame(width: Metrics.trailWidth, height: 0)
+        if highlighted {
+          let button = "btn:\(line.id):restart"
+          IconButton(symbol: RowAction.restart.symbol, size: RowAction.restart.symbolSize, width: Metrics.actionWidth, hot: model.hot == button)
+            .frameID(button)
+            .padding(.trailing, -5)
+        } else {
+          Text(TimeText.short(line.time)).monospacedDigit().foregroundStyle(Palette.secondary)
+            .frame(height: Metrics.buttonHeight)
+        }
+      }
+      .fixedSize()
+      .padding(.leading, Metrics.trailGap)
+    }
+    .font(.system(size: 13))
+    .padding(.horizontal, Metrics.rowInset)
+    .frame(height: Metrics.rowHeight)
+    .background {
+      if highlighted { RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover) }
+    }
+    .frameID("row:" + line.id)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("\(line.tag.name), \(line.count) stopped servers, \(line.open ? "open" : "closed")")
+    .accessibilityAddTraits(.isButton)
+    .accessibilityAction { model.perform(.primary(line.id)) }
+    .accessibilityActions {
+      Button("Restart all in \(line.tag.name)") { model.perform(.action(line.id, .restart)) }
+    }
   }
 }
 
@@ -233,6 +328,7 @@ struct RowView: View {
     .frameID("row:" + row.id)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(row.accessibilityLabel)
+    .accessibilityValue(model.accessibilityDetail(row))
     .accessibilityAddTraits(.isButton)
     .accessibilityAction { model.perform(.primary(row.id)) }
     .accessibilityActions {
@@ -250,6 +346,8 @@ struct RowView: View {
     switch row.state {
     case .stopping, .starting:
       Spinner().frame(height: Metrics.buttonHeight)
+    case .queued:
+      Text("Queued").foregroundStyle(Palette.secondary).frame(height: Metrics.buttonHeight)
     case .force:
       let id = "btn:\(row.id):force"
       ForceStopButton(hot: model.hot == id).frameID(id)
@@ -273,6 +371,8 @@ struct RowView: View {
 }
 
 struct MoreRow: View {
+  /// `Rows.more` for Stopped, or a project line's More.
+  let id: String
   let highlighted: Bool
   let hidden: Int
   let expand: () -> Void
@@ -293,7 +393,7 @@ struct MoreRow: View {
         RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover)
       }
     }
-    .frameID("row:" + Rows.more)
+    .frameID("row:" + id)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(hidden == 1 ? "More, 1 stopped server" : "More, \(hidden) stopped servers")
     .accessibilityAddTraits(.isButton)

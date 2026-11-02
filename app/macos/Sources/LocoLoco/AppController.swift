@@ -22,6 +22,25 @@ final class PanelWindow: NSPanel {
   override var canBecomeMain: Bool { false }
 }
 
+/// The preview card beside the panel. It never takes focus or clicks; the pointer stays the panel's.
+final class PreviewWindow: NSPanel {
+  init() {
+    super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    level = .popUpMenu
+    collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+    backgroundColor = .clear
+    isOpaque = false
+    hasShadow = true
+    hidesOnDeactivate = false
+    isReleasedWhenClosed = false
+    animationBehavior = .none
+    ignoresMouseEvents = true
+  }
+
+  override var canBecomeKey: Bool { false }
+  override var canBecomeMain: Bool { false }
+}
+
 /// A menu item that runs a closure.
 final class ActionItem: NSMenuItem {
   private let handler: () -> Void
@@ -45,6 +64,8 @@ final class AppController: NSObject, NSWindowDelegate {
   let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   let panel = PanelWindow()
   private let hosting: NSHostingView<PanelRoot>
+  let previewWindow = PreviewWindow()
+  private let previewHost: NSHostingView<PreviewRoot>
   let input: InputView
   let hotKey = HotKey()
   private(set) lazy var settings = SettingsController(model: model, hotKey: hotKey)
@@ -69,6 +90,7 @@ final class AppController: NSObject, NSWindowDelegate {
   init(model: Model) {
     self.model = model
     hosting = NSHostingView(rootView: PanelRoot(model: model))
+    previewHost = NSHostingView(rootView: PreviewRoot(model: model))
     input = InputView(model: model)
     transparent = model.transparent
     super.init()
@@ -83,6 +105,7 @@ final class AppController: NSObject, NSWindowDelegate {
     input.content = hosting
     panel.contentView = container
     panel.delegate = self
+    previewWindow.contentView = previewHost
 
     if let button = statusItem.button {
       button.font = .monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
@@ -113,6 +136,8 @@ final class AppController: NSObject, NSWindowDelegate {
       _ = model.showCount
       _ = model.appearance
       _ = model.transparent
+      _ = model.preview
+      _ = model.history
     } onChange: { [weak self] in
       Task { @MainActor in self?.update(); self?.observe() }
     }
@@ -134,6 +159,30 @@ final class AppController: NSObject, NSWindowDelegate {
       panel.invalidateShadow()
     }
     if panel.isVisible { layout() }
+    placePreview()
+  }
+
+  /// Beside the panel, level with the row: its picture's top edge lines up with the row's. Left of the panel,
+  /// or right when there's no room, and kept on the screen.
+  private func placePreview() {
+    guard let id = model.preview, panel.isVisible, !closing, let r = model.frames["row:" + id],
+          let screen = panel.screen ?? NSScreen.main else {
+      if previewWindow.isVisible { previewWindow.orderOut(nil) }
+      return
+    }
+    let size = previewHost.fittingSize
+    let row = panel.convertToScreen(input.convert(r, to: nil))
+    let area = screen.visibleFrame.insetBy(dx: Metrics.screenInset, dy: Metrics.screenInset)
+    var x = panel.frame.minX + Metrics.margin - Metrics.previewGap - size.width + Metrics.margin
+    if x < area.minX { x = panel.frame.maxX - Metrics.margin + Metrics.previewGap - Metrics.margin }
+    var top = row.maxY + Metrics.padding + Metrics.margin
+    top = min(area.maxY, max(top, area.minY + size.height))
+    let frame = NSRect(x: x, y: top - size.height, width: size.width, height: size.height).integral
+    if previewWindow.frame != frame {
+      previewWindow.setFrame(frame, display: true)
+      previewWindow.invalidateShadow()
+    }
+    if !previewWindow.isVisible { previewWindow.orderFront(nil) }
   }
 
   /// Light or Dark for the panel, menus, alerts and Settings. The menu bar icon follows the menu bar, not this.
@@ -193,6 +242,8 @@ final class AppController: NSObject, NSWindowDelegate {
     monitor = nil
     statusItem.button?.highlight(false)
     model.isOpen = false
+    model.preview = nil
+    previewWindow.orderOut(nil)
     NSAnimationContext.runAnimationGroup { context in
       context.duration = 0.15
       context.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -201,6 +252,7 @@ final class AppController: NSObject, NSWindowDelegate {
       MainActor.assumeIsolated {
         guard let self else { return }
         self.panel.orderOut(nil)
+        self.previewWindow.orderOut(nil)
         self.panel.alphaValue = 1
         self.closing = false
         self.model.resetPointer()
@@ -224,7 +276,7 @@ final class AppController: NSObject, NSWindowDelegate {
       height += Metrics.projectHeader * CGFloat(groups.count) + Metrics.projectGap * CGFloat(groups.count - 1)
     }
     if rows.stoppedTotal > 0 {
-      height += Metrics.groupGap + Metrics.rowHeight * CGFloat(1 + rows.stopped.count + (rows.hasMore ? 1 : 0))
+      height += Metrics.groupGap + Metrics.rowHeight * CGFloat(1 + rows.stoppedLines + (rows.hasMore ? 1 : 0))
     }
     let place: (x: CGFloat, top: CGFloat, maxHeight: CGFloat)
     if let screen = centeredOn {
@@ -289,6 +341,9 @@ final class AppController: NSObject, NSWindowDelegate {
       model.expanded = true
       return
     }
+    if id.hasPrefix("line:") { model.toggleProject(String(id.dropFirst(5))); return }
+    if id.hasPrefix("more:") { model.fullProjects.insert(String(id.dropFirst(5))); return }
+    if id.hasPrefix("proj:") { return }
     guard let row = model.rows.row(id) else { return }
     switch row.group {
     case .running:
@@ -300,6 +355,8 @@ final class AppController: NSObject, NSWindowDelegate {
   }
 
   private func perform(_ action: RowAction, on id: String) {
+    if id.hasPrefix("proj:"), action == .stop { model.stopProject(String(id.dropFirst(5))); return }
+    if id.hasPrefix("line:"), action == .restart { restartProject(String(id.dropFirst(5))); return }
     guard let row = model.rows.row(id) else { return }
     switch action {
     case .stop: if row.canStop, let e = row.entryID { model.stop(e) }
@@ -324,6 +381,7 @@ final class AppController: NSObject, NSWindowDelegate {
   // MARK: Menus
 
   private func showContextMenu(for id: String, at point: CGPoint?) {
+    if id.hasPrefix("proj:") || id.hasPrefix("line:") { showProjectMenu(for: id, at: point); return }
     guard let row = model.rows.row(id) else { return }
     let isDev = row.entryID != nil
     let folder = URL(fileURLWithPath: row.folder)
@@ -350,6 +408,7 @@ final class AppController: NSObject, NSWindowDelegate {
     menu.addItem(ActionItem("Stop", symbol: "stop.fill", enabled: row.canStop) { [weak self] in
       if let e = row.entryID { self?.model.stop(e) }
     })
+    if let e = row.entryID { menu.addItem(needsItem(for: e)) }
     menu.addItem(.separator())
     menu.addItem(ActionItem("Show in Finder", symbol: "folder", enabled: folderExists) { [weak self] in
       NSWorkspace.shared.activateFileViewerSelecting([folder])
@@ -379,6 +438,10 @@ final class AppController: NSObject, NSWindowDelegate {
       })
     }
 
+    popUp(menu, for: id, at: point)
+  }
+
+  private func popUp(_ menu: NSMenu, for id: String, at point: CGPoint?) {
     let at: CGPoint
     if let point { at = point }
     else if let r = model.frames["row:" + id] { at = CGPoint(x: r.minX + Metrics.rowInset, y: r.maxY) }
@@ -389,6 +452,66 @@ final class AppController: NSObject, NSWindowDelegate {
     menu.popUp(positioning: nil, at: at, in: input)
     model.menuRow = nil
     refreshHover()
+  }
+
+  /// Needs ▸ the servers it calls, ticked, then the rest of its project. Ticking by hand wins over what was found.
+  private func needsItem(for id: UUID) -> NSMenuItem {
+    let item = NSMenuItem(title: "Needs", action: nil, keyEquivalent: "")
+    item.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)
+    let sub = NSMenu()
+    sub.autoenablesItems = false
+    let needs = model.directNeeds(of: id)
+    let ticked = Set(needs.map(\.port))
+    let others = model.projectNeighbours(of: id).filter { !ticked.contains($0.port) }
+    func add(_ n: Model.Need, on: Bool) {
+      let title = "\(n.port)\t\(n.name ?? "")"
+      let i = ActionItem(title, enabled: true) { [weak self] in self?.model.toggleNeed(id, port: n.port) }
+      i.state = on ? .on : .off
+      // A tab stop lines the names up after the ports.
+      let style = NSMutableParagraphStyle()
+      style.tabStops = [NSTextTab(textAlignment: .left, location: 44)]
+      let text = NSMutableAttributedString(string: "\(n.port)", attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style])
+      text.append(NSAttributedString(string: "\t" + (n.name ?? ""), attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: style]))
+      i.attributedTitle = text
+      sub.addItem(i)
+    }
+    for n in needs { add(n, on: true) }
+    if !needs.isEmpty, !others.isEmpty { sub.addItem(.separator()) }
+    for n in others { add(n, on: false) }
+    if needs.isEmpty, others.isEmpty {
+      sub.addItem(ActionItem("Nothing found", enabled: false) {})
+    }
+    item.submenu = sub
+    return item
+  }
+
+  /// Right-click on a project's label in Running or its line in Stopped.
+  private func showProjectMenu(for id: String, at point: CGPoint?) {
+    let root = String(id.dropFirst(5))
+    let name = model.projectName(root)
+    let running = model.rows.running.filter { $0.project?.root == root && $0.canStop }
+    let stopped = model.stoppedInProject(root)
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    menu.addItem(ActionItem("Stop all in \(name)", symbol: "stop.fill", enabled: !running.isEmpty) { [weak self] in
+      self?.model.stopProject(root)
+    })
+    menu.addItem(ActionItem("Restart all in \(name)", symbol: "arrow.clockwise", enabled: !stopped.isEmpty) { [weak self] in
+      self?.restartProject(root)
+    })
+    menu.addItem(.separator())
+    menu.addItem(ActionItem("Rename project…", symbol: "pencil") { [weak self] in
+      self?.renameProject(root: root, name: name)
+    })
+    popUp(menu, for: id, at: point)
+  }
+
+  /// More than 5 asks first.
+  private func restartProject(_ root: String) {
+    let n = model.stoppedInProject(root).count
+    guard n > 0 else { return }
+    if n > 5, !alert("Restart all \(n) in \(model.projectName(root))?", info: nil, action: "Restart all", destructive: false) { return }
+    model.restartProject(root)
   }
 
   private func openFolder(_ folder: URL, with bundleID: String) {

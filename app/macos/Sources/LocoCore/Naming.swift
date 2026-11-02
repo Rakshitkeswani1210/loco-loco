@@ -189,6 +189,112 @@ public enum Naming {
     return homePrefix + parts[...i].joined(separator: "/")
   }
 
+  static let shellOperators: Set<String> = ["&&", "||", ";", "|", "&", ">", ">>", "2>", "2>&1", "<"]
+
+  /// Splits a command line into words the way a shell would, keeping quoted spaces. Operators like && are their own words.
+  public static func shellWords(_ command: String) -> [String] {
+    var words: [String] = []
+    var word = ""
+    var inWord = false
+    var quote: Character?
+    var escaped = false
+    var prev: Character?
+    func end() {
+      if inWord { words.append(word) }
+      word = ""
+      inWord = false
+    }
+    for c in command {
+      defer { prev = c }
+      if escaped { word.append(c); escaped = false; inWord = true; continue }
+      if let q = quote {
+        if c == q { quote = nil } else if c == "\\" && q == "\"" { escaped = true } else { word.append(c) }
+        continue
+      }
+      switch c {
+      case "'", "\"": quote = c; inWord = true
+      case "\\": escaped = true
+      case " ", "\t", "\n": end()
+      case "&" where inWord && word.hasSuffix(">"):
+        word.append(c)  // 2>&1
+      case ";", "&", "|":
+        end()
+        // && and || are one word.
+        if c != ";", prev == c, words.last == String(c) { words[words.count - 1] = String([c, c]) } else { words.append(String(c)) }
+      default: word.append(c); inWord = true
+      }
+    }
+    end()
+    return words
+  }
+
+  /// The folder a static file server serves, when it isn't the folder it runs in:
+  /// X in `python3 -m http.server --directory X` (or `-d X`), `npx serve X` and `http-server X`.
+  /// A relative X is taken from `cwd`. Nil when the command names no folder.
+  public static func servedFolder(_ argv: [String], cwd: String, isFolder: (String) -> Bool = defaultIsFolder) -> String? {
+    var folder: String?
+    if let m = argv.firstIndex(of: "-m"), m + 1 < argv.count, argv[m + 1] == "http.server" {
+      for (i, a) in argv.enumerated().dropFirst(m + 2) {
+        if (a == "--directory" || a == "-d"), i + 1 < argv.count { folder = argv[i + 1]; break }
+        if a.hasPrefix("--directory=") { folder = String(a.dropFirst("--directory=".count)); break }
+      }
+    } else if let s = argv.firstIndex(where: { ["serve", "http-server"].contains(baseName($0)) || $0.contains("/node_modules/serve/") || $0.contains("/node_modules/http-server/") }) {
+      let takesValue: Set<String> = ["-l", "--listen", "-p", "--port", "-a", "-c", "--config", "-o", "-P", "--proxy"]
+      var i = s + 1
+      while i < argv.count {
+        let a = argv[i]
+        if a.hasPrefix("-") { i += takesValue.contains(a) ? 2 : 1; continue }
+        folder = a
+        break
+      }
+    }
+    guard let folder, !folder.isEmpty else { return nil }
+    let full = ((folder.hasPrefix("/") ? folder : (cwd as NSString).appendingPathComponent(folder)) as NSString).standardizingPath
+    let here = (cwd as NSString).standardizingPath
+    return full != here && isFolder(full) ? full : nil
+  }
+
+  /// The same, read from a saved command line, up to its first && or ;. For entries saved before names followed it.
+  public static func servedFolder(command: String, cwd: String, isFolder: (String) -> Bool = defaultIsFolder) -> String? {
+    var dir = cwd
+    var argv: [String] = []
+    for w in shellWords(command) + [";"] {
+      guard shellOperators.contains(w) || w.hasPrefix(">") || w.hasPrefix("2>") else { argv.append(w); continue }
+      if argv.first == "cd", argv.count == 2 {
+        dir = argv[1].hasPrefix("/") ? argv[1] : (dir as NSString).appendingPathComponent(argv[1])
+      } else if let found = servedFolder(argv, cwd: dir, isFolder: isFolder) {
+        return found
+      }
+      argv = []
+    }
+    return nil
+  }
+
+  /// The folder a static server's pages come from, read from its saved command: the folder it names, else the one it
+  /// runs in. A custom server handed a folder (`node serve.mjs ~/site`) counts too. Nil when it isn't a static server.
+  public static func staticFolder(command: String, cwd: String, isFolder: (String) -> Bool = defaultIsFolder) -> String? {
+    var dir = cwd
+    var argv: [String] = []
+    for w in shellWords(command) + [";"] {
+      guard shellOperators.contains(w) || w.hasPrefix(">") || w.hasPrefix("2>") else { argv.append(w); continue }
+      defer { argv = [] }
+      if argv.first == "cd", argv.count == 2 {
+        dir = argv[1].hasPrefix("/") ? argv[1] : (dir as NSString).appendingPathComponent(argv[1])
+        continue
+      }
+      if let served = servedFolder(argv, cwd: dir, isFolder: isFolder) { return served }
+      let isStatic = argv.contains("http.server") || argv.contains { ["serve", "http-server"].contains(baseName($0)) }
+      if isStatic { return (dir as NSString).standardizingPath }
+      if argv.count > 1, let folder = argv.dropFirst().first(where: { $0.hasPrefix("/") && isFolder($0) }) { return folder }
+    }
+    return nil
+  }
+
+  public static func defaultIsFolder(_ path: String) -> Bool {
+    var dir: ObjCBool = false
+    return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue
+  }
+
   /// "Acme" for "~/Documents/Acme ".
   public static func projectName(_ root: String) -> String {
     (root as NSString).lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)

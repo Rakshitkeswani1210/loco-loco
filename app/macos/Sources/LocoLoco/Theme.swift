@@ -31,6 +31,14 @@ enum Metrics {
   static let gapBelowMenuBar: CGFloat = 5
   static let screenInset: CGFloat = 6
   static let shownStopped = 5
+  /// The preview card: the panel's frame, 8pt to its side, a 16:10 snapshot and 24pt rows for what it needs.
+  static let previewGap: CGFloat = 8
+  static let previewWidth: CGFloat = 300
+  static let snapshotSize = CGSize(width: 288, height: 180)
+  static let snapshotRadius: CGFloat = 6
+  static let previewRow: CGFloat = 24
+  static let previewInset: CGFloat = 4
+  static let previewPortWidth: CGFloat = 40
   /// The sleeping octopus under "Nothing running".
   static let emptyHeight: CGFloat = 56
   static let octopusHeight: CGFloat = 34

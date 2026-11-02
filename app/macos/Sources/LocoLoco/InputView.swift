@@ -76,16 +76,17 @@ final class InputView: NSView, NSViewToolTipOwner {
   }
 
   override func rightMouseDown(with e: NSEvent) {
-    guard !model.staleUnderPointer, let id = model.target(at: local(e)).row, id != Rows.more else { return }
+    guard !model.staleUnderPointer, let id = model.target(at: local(e)).row, id != Rows.more, !id.hasPrefix("more:") else { return }
     model.perform(.menu(id, local(e)))
   }
 
+  /// `btn:<row>:<action>` or `row:<row>`. Row ids for projects hold a colon themselves (`line:<folder>`).
   private func activate(_ target: String) {
-    let parts = target.split(separator: ":", maxSplits: 2).map(String.init)
-    if parts.first == "btn", parts.count == 3, let action = RowAction(rawValue: parts[2]) {
-      model.perform(.action(parts[1], action))
-    } else if parts.first == "row", parts.count == 2 {
-      model.perform(.primary(parts[1]))
+    if target.hasPrefix("btn:"), let colon = target.lastIndex(of: ":"),
+       let action = RowAction(rawValue: String(target[target.index(after: colon)...])) {
+      model.perform(.action(String(target[target.index(target.startIndex, offsetBy: 4)..<colon]), action))
+    } else if target.hasPrefix("row:") {
+      model.perform(.primary(String(target.dropFirst(4))))
     }
   }
 
@@ -103,6 +104,10 @@ final class InputView: NSView, NSViewToolTipOwner {
     case 125: model.moveHighlight(1)
     case 126: model.moveHighlight(-1)
     case 36, 76: if let h = model.highlight { model.perform(.primary(h)) }
+    case 49: model.togglePreview()
+    // Right opens a project's line in Stopped, Left closes it.
+    case 123, 124:
+      if let line = model.rows.line(model.highlight), line.open != (e.keyCode == 124) { model.toggleProject(line.root) }
     default: super.keyDown(with: e)
     }
   }
@@ -131,10 +136,16 @@ final class InputView: NSView, NSViewToolTipOwner {
     for (id, rect) in model.frames where id.hasPrefix("row:") && id != "row:" + Rows.more {
       addToolTip(rect, owner: self, userData: nil)
     }
+    // Added last, so they win over the row they sit in.
+    for (id, rect) in model.frames where id.hasPrefix("btn:") {
+      addToolTip(rect, owner: self, userData: nil)
+    }
   }
 
   func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
-    guard let row = model.rows.row(model.target(at: point).row) else { return "" }
+    let t = model.target(at: point)
+    if let hot = t.hot, hot.hasPrefix("btn:") { return model.buttonTip(hot) }
+    guard let row = model.rows.row(t.row) else { return "" }
     return row.name + "\n" + (row.folder as NSString).abbreviatingWithTildeInPath
   }
 

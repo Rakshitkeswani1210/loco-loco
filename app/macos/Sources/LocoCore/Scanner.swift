@@ -26,6 +26,9 @@ public struct Server: Sendable, Identifiable, Hashable {
   /// The root and everything under it. Stop signals all of them.
   public let processes: [ProcRef]
   public let executable: String?
+  /// Ports in local URLs in its environment, like `API_URL=http://127.0.0.1:8002 next dev`, where the shell
+  /// handed its place to the server. Only the ports are kept, never the values.
+  public var envNeeds: [UInt16] = []
 }
 
 public enum Scanner {
@@ -110,13 +113,15 @@ public enum Scanner {
       var name: String
       var projectDir = listenerCwd
       if isDev {
-        let project = Naming.project(cwd: listenerCwd, home: home)
+        // A static server named after the folder it serves, not the one it was started from.
+        let served = Naming.servedFolder(args(g.listener).argv, cwd: listenerCwd).flatMap { $0.hasPrefix(homePrefix) ? $0 : nil }
+        let project = Naming.project(cwd: served ?? listenerCwd, home: home)
         projectDir = project.dir
         if let uv = g.chain.lazy.compactMap({ Naming.uvRunName(args($0).argv) }).first {
           name = uv
         } else if project.isProject {
           name = Naming.baseName(project.dir)
-        } else if let script = Naming.scriptName(args(g.listener).argv, cwd: listenerCwd, home: home) {
+        } else if served == nil, let script = Naming.scriptName(args(g.listener).argv, cwd: listenerCwd, home: home) {
           name = script
           projectDir = listenerCwd
         } else {
@@ -154,7 +159,8 @@ public enum Scanner {
         ports: g.ports.sorted(),
         name: name, projectDir: projectDir,
         command: command, commandDir: commandDir, path: path,
-        isDevServer: isDev, processes: procs, executable: listenerExe.isEmpty ? nil : listenerExe))
+        isDevServer: isDev, processes: procs, executable: listenerExe.isEmpty ? nil : listenerExe,
+        envNeeds: isDev ? Needs.ports(env: rootArgs.env.merging(args(g.listener).env) { a, _ in a }, own: g.ports) : []))
     }
     return servers.sorted { ($0.port, $0.root.pid) < ($1.port, $1.root.pid) }
   }

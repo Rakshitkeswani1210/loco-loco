@@ -24,6 +24,8 @@ final class TestHooks: NSObject {
   private var fieldCalls: [String] = []
   /// The next menu that opens chooses the first item whose title starts with this, after a moment for a screenshot.
   private var pick: String?
+  /// The next menu that opens is captured here after half a second, and its items and submenus noted.
+  private var menuShot: String?
   /// Focus, activation and outside clicks, newest last, so a panel that closes by itself can be explained.
   private var events: [String] = []
   private var clickMonitor: Any?
@@ -43,6 +45,14 @@ final class TestHooks: NSObject {
         guard let self, let menu else { return }
         let keys = menu.items.filter { !$0.keyEquivalent.isEmpty }.map { "\($0.title)=\($0.keyEquivalentModifierMask.rawValue):\($0.keyEquivalent)" }
         self.note("menu keys " + keys.joined(separator: ", "))
+        for item in menu.items where item.submenu != nil {
+          let subs = item.submenu!.items.map { $0.isSeparatorItem ? "—" : ($0.state == .on ? "✓ " : "") + $0.title.replacingOccurrences(of: "\t", with: " ") }
+          self.note("submenu \(item.title): " + subs.joined(separator: " | "))
+        }
+        if let path = self.menuShot {
+          self.menuShot = nil
+          self.after(0.5) { self.boardShot(path) }
+        }
         if let pick = self.pick, let index = menu.items.firstIndex(where: { $0.title.hasPrefix(pick) }) {
           self.pick = nil
           self.after(0.8) {
@@ -142,6 +152,14 @@ final class TestHooks: NSObject {
     case "move" where a.count == 3: move(to: CGPoint(x: Double(a[1]) ?? 0, y: Double(a[2]) ?? 0))
     case "row" where a.count >= 2: if let r = rowFrame(port: a[1], group: a.count > 2 ? a[2] : nil) { move(to: CGPoint(x: r.midX, y: r.midY)) }
     case "more": if let r = model.frames["row:more"] { move(to: CGPoint(x: r.midX, y: r.midY)) }
+    // The first frame whose id contains the text, rows before buttons: `frame line:`, `frame proj:`, `frame btn:line`.
+    case "frame" where a.count >= 2:
+      let text = a.dropFirst().joined(separator: " ")
+      if let r = model.frames.filter({ $0.key.contains(text) }).sorted(by: { ($0.key.hasPrefix("row:") ? 0 : 1, $0.key) < ($1.key.hasPrefix("row:") ? 0 : 1, $1.key) }).first?.value {
+        move(to: CGPoint(x: r.midX, y: r.midY))
+      }
+    case "boardShot" where a.count == 2: boardShot(a[1])
+    case "previews" where a.count == 2: model.setShowPreviews(a[1] == "on")
     case "btn" where a.count == 2: button(a[1])
     case "menuButton": if let r = model.frames["menu"] { move(to: CGPoint(x: r.midX, y: r.midY)) }
     case "leave": input.mouseExited(with: mouse(.mouseMoved))
@@ -153,6 +171,7 @@ final class TestHooks: NSObject {
     case "type" where a.count >= 1: alertText = a.dropFirst().joined(separator: " ")
     case "hold" where a.count == 2: controller.holdOpen = a[1] == "on" ? 1 : 0
     case "group" where a.count == 2: model.setGroupByProject(a[1] == "on")
+    case "menuShot" where a.count == 2: menuShot = a[1]
     case "pick" where a.count >= 2: pick = a.dropFirst().joined(separator: " ")
     case "only" where a.count >= 2: model.onlyPorts = a[1] == "all" ? nil : Set(a.dropFirst().compactMap { UInt16($0) })
     case "appearance" where a.count == 2:
@@ -316,6 +335,42 @@ final class TestHooks: NSObject {
     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
   }
 
+  /// Captures each of Loco Loco's windows on screen (panel, preview card, open menus) and lays them out as they sit,
+  /// on a plain backdrop, so the card can be checked against the panel without recording the screen.
+  private func boardShot(_ path: String) {
+    typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+    guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { note("no capture"); return }
+    let capture = unsafeBitCast(sym, to: Capture.self)
+    // The panel, the card and open menus. Not the status item, Settings or the snapshotter's offscreen windows.
+    let onScreen = NSScreen.screens.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+    let windows = NSApp.windows.filter { w in
+      let kind = String(describing: type(of: w))
+      return w.isVisible && w.windowNumber > 0 && w.frame.intersects(onScreen) && w.alphaValue > 0
+        && (w === panel || w === controller.previewWindow || kind.contains("Menu") || kind.contains("ToolTip"))
+    }
+      .sorted { ($0 === panel ? 0 : $0 === controller.previewWindow ? 1 : 2) < ($1 === panel ? 0 : $1 === controller.previewWindow ? 1 : 2) }
+    guard !windows.isEmpty else { return }
+    let union = windows.map(\.frame).reduce(windows[0].frame) { $0.union($1) }.insetBy(dx: -24, dy: -24)
+    let scale = panel.backingScaleFactor
+    guard let rep = NSBitmapImageRep(
+      bitmapDataPlanes: nil, pixelsWide: Int(union.width * scale), pixelsHigh: Int(union.height * scale), bitsPerSample: 8,
+      samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return }
+    rep.size = union.size
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    NSColor(srgbRed: 0.15, green: 0.44, blue: 0.67, alpha: 1).setFill()
+    union.offsetBy(dx: -union.minX, dy: -union.minY).fill()
+    for w in windows {
+      guard let number = UInt32(exactly: w.windowNumber), let image = capture(.null, 8, number, 0)?.takeRetainedValue() else { continue }
+      let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+      // Window images include their shadow, centred on the frame.
+      let origin = CGPoint(x: w.frame.midX - size.width / 2 - union.minX, y: w.frame.midY - size.height / 2 - union.minY)
+      NSGraphicsContext.current?.cgContext.draw(image, in: CGRect(origin: origin, size: size))
+    }
+    NSGraphicsContext.restoreGraphicsState()
+    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+  }
+
   /// Captures the panel the next time it opens and takes focus, framed, over what's below, and bare.
   private func autoShot(_ path: String) {
     let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
@@ -437,6 +492,15 @@ final class TestHooks: NSObject {
       "groups": (rows.groups ?? []).map { ["name": $0.tag.name, "tint": $0.tag.tint ?? -1, "ports": $0.rows.map { Int($0.port) }] },
       "highlight": model.highlight ?? "", "hot": model.hot ?? "", "stale": model.staleUnderPointer,
       "expanded": model.expanded, "scrolls": model.scrolls,
+      "order": rows.order, "preview": model.preview ?? "", "tip": model.hot.map { model.buttonTip($0) } ?? "", "previewVisible": controller.previewWindow.isVisible,
+      "previewFrame": [controller.previewWindow.frame.minX, controller.previewWindow.frame.minY, controller.previewWindow.frame.width, controller.previewWindow.frame.height],
+      "chains": model.chains.map { $0.ids.compactMap { model.history[$0]?.port }.map(Int.init) },
+      "lines": rows.stoppedItems.compactMap { item -> [String: Any]? in
+        guard case .line(let l) = item else { return nil }
+        return ["name": l.tag.name, "count": l.count, "open": l.open, "ports": l.rows.map { Int($0.port) }, "hidden": l.hidden]
+      },
+      "needs": Dictionary(uniqueKeysWithValues: model.history.entries.map { ("\($0.port) \($0.name) \($0.id.uuidString.prefix(4))", $0.neededPorts.map(Int.init)) }),
+      "titles": Dictionary(uniqueKeysWithValues: model.history.entries.compactMap { e in e.title.map { ("\(e.port) \(e.id.uuidString.prefix(4))", $0) } }),
       "frames": model.frames.mapValues { [$0.minX, $0.minY, $0.width, $0.height] },
       "events": events,
     ]

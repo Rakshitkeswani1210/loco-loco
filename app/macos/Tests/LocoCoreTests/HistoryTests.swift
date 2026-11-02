@@ -130,4 +130,38 @@ private func server(
     #expect(try String(contentsOf: url, encoding: .utf8).contains("projectRoot") == false)
     #expect(History.load(from: url).first?.projectRoot == nil)
   }
+
+  @Test func pruneKeepsWhatAKeptServerNeedsPastTheLimit() {
+    var app = HistoryEntry(server: server(root: 90, port: 3102, command: "app"), now: t0)
+    app.stoppedAt = t0 + 3
+    app.needs = [8002]
+    var api = HistoryEntry(server: server(root: 91, port: 8002, command: "api"), now: t0)
+    api.stoppedAt = t0 + 1
+    api.needs = [8090]
+    var mock = HistoryEntry(server: server(root: 92, port: 8090, command: "mock"), now: t0)
+    mock.stoppedAt = t0
+    var deck = HistoryEntry(server: server(root: 93, port: 8947, command: "deck"), now: t0)
+    deck.stoppedAt = t0 + 2
+    var h = History(entries: [app, api, mock, deck], limit: 2)
+    h.prune()
+    #expect(Set(h.stopped.map(\.port)) == [3102, 8947, 8002, 8090])
+  }
+
+  @Test func neededPortsFollowTheTicks() {
+    var e = HistoryEntry(server: server(root: 94, port: 3102, command: "app"), now: t0)
+    e.needs = [8002, 3102, 7777]
+    e.needsRemoved = [7777]
+    e.needsAdded = [8090]
+    #expect(e.neededPorts == [8002, 8090])
+  }
+
+  @Test func aNewCommandForgetsTheNeedsFoundInTheOldOne() {
+    var h = History()
+    h.reconcile([server(root: 95, port: 3102, command: "API=http://127.0.0.1:8002 next dev")], now: t0)
+    h[h.entries[0].id]?.needs = [8002]
+    h.reconcile([], now: t0 + 1)
+    h.reconcile([server(root: 96, port: 3102, command: "API=http://127.0.0.1:8003 next dev")], now: t0 + 2)
+    #expect(h.entries.count == 1)
+    #expect(h.entries[0].needs == nil)
+  }
 }

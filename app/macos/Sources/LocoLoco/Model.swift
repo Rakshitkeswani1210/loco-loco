@@ -46,11 +46,13 @@ struct ProjectGroup: Identifiable, Equatable {
   let tag: ProjectTag
   var rows: [Row]
   var id: String { tag.root == nil ? "\u{0}other" : tag.name }
+  /// What hovering the label highlights. Other has none, since it isn't one project.
+  var headerID: String? { tag.root.map { "proj:" + $0 } }
 }
 
 /// One line in the panel.
 struct Row: Identifiable, Equatable {
-  enum State: Equatable { case idle, stopping, starting, force }
+  enum State: Equatable { case idle, stopping, starting, force, queued }
 
   /// The history entry's UUID, or `app-<pid>-<start>` for app and macOS servers.
   let id: String
@@ -90,6 +92,7 @@ struct Row: Identifiable, Equatable {
     case .stopping: status = "stopping"
     case .force: status = "not stopping, force stop available"
     case .starting: status = "starting"
+    case .queued: status = "queued"
     case .idle:
       if let failure { status = "didn't start: \(failure)" }
       else if group == .running { status = "running since \(TimeText.short(time))" }
@@ -100,6 +103,34 @@ struct Row: Identifiable, Equatable {
   }
 }
 
+/// Two or more stopped servers from one project, as one line that opens to list them.
+struct ProjectLine: Identifiable, Equatable {
+  let tag: ProjectTag
+  let count: Int
+  /// When the latest one stopped.
+  let time: Date
+  let open: Bool
+  /// Shown while open: the latest few, unless its More was chosen.
+  let rows: [Row]
+  var root: String { tag.root ?? "" }
+  var id: String { "line:" + root }
+  var moreID: String { "more:" + root }
+  var hidden: Int { open ? count - rows.count : 0 }
+}
+
+/// A line in Stopped: a server on its own, or a project's line.
+enum StoppedItem: Identifiable, Equatable {
+  case row(Row)
+  case line(ProjectLine)
+
+  var id: String {
+    switch self {
+    case .row(let r): r.id
+    case .line(let l): l.id
+    }
+  }
+}
+
 struct Rows: Equatable {
   static let more = "more"
 
@@ -107,13 +138,43 @@ struct Rows: Equatable {
   var running: [Row] = []
   /// Set when Group by project is on and some server has a project.
   var groups: [ProjectGroup]?
+  /// Stopped, grouped by project, newest first. The 5 latest unless More was chosen.
+  var stoppedItems: [StoppedItem] = []
+  /// Every stopped row on show: servers on their own and the ones in open lines.
   var stopped: [Row] = []
   /// Every stopped server, including the ones under More.
   var stoppedTotal = 0
+  /// How many Stopped lines aren't shown until More, and the servers in them.
+  var hiddenItems = 0
+  var hiddenServers = 0
 
-  var hasMore: Bool { stopped.count < stoppedTotal }
+  var hasMore: Bool { hiddenItems > 0 }
   /// Top to bottom, as the arrow keys move.
-  var order: [String] { running.map(\.id) + stopped.map(\.id) + (hasMore ? [Rows.more] : []) }
+  var order: [String] {
+    var ids = running.map(\.id)
+    for item in stoppedItems {
+      switch item {
+      case .row(let r): ids.append(r.id)
+      case .line(let l):
+        ids.append(l.id)
+        ids += l.rows.map(\.id)
+        if l.hidden > 0 { ids.append(l.moreID) }
+      }
+    }
+    return ids + (hasMore ? [Rows.more] : [])
+  }
+  /// Rows under the Stopped header, for the panel's height.
+  var stoppedLines: Int {
+    stoppedItems.reduce(0) { n, item in
+      if case .line(let l) = item { return n + 1 + l.rows.count + (l.hidden > 0 ? 1 : 0) }
+      return n + 1
+    }
+  }
+
+  func line(_ id: String?) -> ProjectLine? {
+    for case .line(let l) in stoppedItems where l.id == id { return l }
+    return nil
+  }
 
   func row(_ id: String?) -> Row? {
     guard let id else { return nil }
@@ -150,6 +211,15 @@ final class Model {
     case starting(pid: pid_t, since: Date)
   }
 
+  /// A restart that starts what a server needs first, one at a time, each once the one before listens.
+  struct Chain {
+    /// Still to come up, in order. The server asked for is last.
+    var ids: [UUID]
+    /// The ones this chain started. One that's no longer starting and isn't up didn't make it.
+    var started: Set<UUID> = []
+    let since: Date
+  }
+
   // MARK: Settings
 
   private(set) var showCount: Bool
@@ -167,6 +237,8 @@ final class Model {
   private(set) var transparent: Bool
   /// Read from macOS, which the user can change in System Settings too.
   private(set) var launchAtLogin = false
+  /// A card with a snapshot of the page beside the panel, on hover.
+  private(set) var showPreviews: Bool
 
   // MARK: Servers and history
 
@@ -175,19 +247,34 @@ final class Model {
   private(set) var links: [ProcRef: UUID] = [:]
   private(set) var busy: [UUID: Busy] = [:]
   private(set) var forced: Set<UUID> = []
+  /// Restarts waiting on the servers they need, needs first.
+  private(set) var chains: [Chain] = []
   var expanded = false
+  /// Stopped project lines opened or closed by hand, by project folder, until the panel closes.
+  /// A line whose newest server didn't start opens by itself, so this flips it.
+  var toggledProjects: Set<String> = []
+  /// Project lines whose More was chosen: they list every stopped server.
+  var fullProjects: Set<String> = []
   var scrolls = false
   /// Set only by the test hooks, to show just these ports in screenshots. Scanning and history are unaffected.
   var onlyPorts: Set<UInt16>?
 
   // MARK: Pointer and keyboard
 
-  var highlight: String?
+  var highlight: String? {
+    didSet { if highlight != oldValue { updatePreview() } }
+  }
+  /// The row whose preview card shows beside the panel.
+  var preview: String?
   /// The button under the pointer: `btn:<row>:<action>` or `menu`.
   var hot: String?
   /// The row whose context menu is open. It stays highlighted and hides its buttons.
-  var menuRow: String?
-  var moreMenuOpen = false
+  var menuRow: String? {
+    didSet { if menuRow != nil { preview = nil } }
+  }
+  var moreMenuOpen = false {
+    didSet { if moreMenuOpen { preview = nil } }
+  }
 
   @ObservationIgnored var frames: [String: CGRect] = [:]
   @ObservationIgnored var pointer: CGPoint?
@@ -205,6 +292,12 @@ final class Model {
   }
 
   @ObservationIgnored private var timer: Timer?
+  @ObservationIgnored private var previewTimer: Timer?
+  @ObservationIgnored let snapshotter = Snapshotter()
+  /// When each running server was first linked: process start on the first scan, else when it came up. Snapshots follow it.
+  @ObservationIgnored private var cameUp: [UUID: Date] = [:]
+  /// Entries whose saved command was checked for a served folder this session.
+  @ObservationIgnored private var namesChecked: Set<UUID> = []
   @ObservationIgnored private var spawned: [pid_t: UUID] = [:]
   @ObservationIgnored private let watcher = ChildWatcher()
   @ObservationIgnored private var scanning = false
@@ -219,6 +312,13 @@ final class Model {
     #endif
     return NSHomeDirectory()
   }()
+  /// The history file. Test builds can point it at a copy, so checks leave the real one alone.
+  @ObservationIgnored private let historyURL: URL = {
+    #if TEST_HOOKS
+    if let h = ProcessInfo.processInfo.environment["LOCO_HISTORY"] { return URL(fileURLWithPath: h) }
+    #endif
+    return History.defaultURL
+  }()
   /// Project folders found this session, by server folder. Nil when a folder has none.
   @ObservationIgnored private var rootCache: [String: String?] = [:]
 
@@ -226,7 +326,7 @@ final class Model {
     let d = UserDefaults.standard
     d.register(defaults: [
       "showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false, "shortcut": Shortcut.standard.storage,
-      "appearance": Appearance.system.rawValue, "transparent": false,
+      "appearance": Appearance.system.rawValue, "transparent": false, "showPreviews": true,
     ])
     showCount = d.bool(forKey: "showCount")
     showAll = d.bool(forKey: "showAll")
@@ -237,7 +337,9 @@ final class Model {
     shortcut = Shortcut(storage: d.string(forKey: "shortcut") ?? "")
     appearance = Appearance(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
     transparent = d.bool(forKey: "transparent")
-    history = History(entries: History.load(), limit: d.integer(forKey: "historyLimit"))
+    showPreviews = d.bool(forKey: "showPreviews")
+    history = History(entries: [], limit: d.integer(forKey: "historyLimit"))
+    history = History(entries: History.load(from: historyURL), limit: historyLimit)
   }
 
   // MARK: Rows
@@ -264,18 +366,54 @@ final class Model {
       out.running.append(Row(
         id: id.uuidString, group: .running, port: e.port, ports: e.ports, name: e.name, folder: e.projectDir,
         project: tag(e.projectRoot), time: since, failure: nil, state: .starting, entryID: id, server: nil, logPath: e.logPath))
+      shown.insert(id)
+    }
+    // Waiting for a server it needs: in Running, in the order they'll start.
+    for c in chains {
+      for (i, id) in c.ids.enumerated() where !shown.contains(id) {
+        guard let e = history[id], only?.contains(e.port) ?? true else { continue }
+        shown.insert(id)
+        out.running.append(Row(
+          id: id.uuidString, group: .running, port: e.port, ports: e.ports, name: e.name, folder: e.projectDir,
+          project: tag(e.projectRoot), time: c.since - Double(i) / 1000, failure: nil, state: .queued, entryID: id, server: nil, logPath: e.logPath))
+      }
     }
     out.running.sort { ($1.time, $0.port, $0.id) < ($0.time, $1.port, $1.id) }
     if groupByProject { group(&out) }
 
-    let stopped = history.stopped.filter { busy[$0.id] == nil && (only?.contains($0.port) ?? true) }
+    let stopped = history.stopped.filter { !shown.contains($0.id) && busy[$0.id] == nil && (only?.contains($0.port) ?? true) }
     out.stoppedTotal = stopped.count
-    // A More row that would hide a single entry takes that entry's height, so show it instead.
-    let limit = expanded || stopped.count <= Metrics.shownStopped + 1 ? stopped.count : Metrics.shownStopped
-    for e in stopped.prefix(limit) {
-      out.stopped.append(Row(
-        id: e.id.uuidString, group: .stopped, port: e.port, ports: e.ports, name: e.name, folder: e.projectDir,
-        project: tag(e.projectRoot), time: e.stoppedAt ?? e.lastSeenAt, failure: e.failure, state: .idle, entryID: e.id, server: nil, logPath: e.logPath))
+    func row(_ e: HistoryEntry) -> Row {
+      Row(id: e.id.uuidString, group: .stopped, port: e.port, ports: e.ports, name: e.name, folder: e.projectDir,
+          project: tag(e.projectRoot), time: e.stoppedAt ?? e.lastSeenAt, failure: e.failure, state: .idle, entryID: e.id, server: nil, logPath: e.logPath)
+    }
+    // One line per project with two or more, where its newest one would be. A server with no project stays a row.
+    var byProject: [String: [HistoryEntry]] = [:]
+    for e in stopped { if let root = e.projectRoot { byProject[root, default: []].append(e) } }
+    var items: [StoppedItem] = []
+    var placed = Set<String>()
+    for e in stopped {
+      guard let root = e.projectRoot, let members = byProject[root], members.count > 1 else { items.append(.row(row(e))); continue }
+      guard placed.insert(root).inserted, let tag = tag(root) else { continue }
+      let open = (members[0].failure != nil) != toggledProjects.contains(root)
+      // A More that would hide a single server takes that server's height, so show it instead.
+      let limit = fullProjects.contains(root) || members.count <= Metrics.shownStopped + 1 ? members.count : Metrics.shownStopped
+      items.append(.line(ProjectLine(
+        tag: tag, count: members.count, time: members[0].stoppedAt ?? members[0].lastSeenAt, open: open,
+        rows: open ? members.prefix(limit).map(row) : [])))
+    }
+    let limit = expanded || items.count <= Metrics.shownStopped + 1 ? items.count : Metrics.shownStopped
+    out.stoppedItems = Array(items.prefix(limit))
+    out.hiddenItems = items.count - limit
+    out.hiddenServers = items.dropFirst(limit).reduce(0) { n, item in
+      if case .line(let l) = item { return n + l.count }
+      return n + 1
+    }
+    for item in out.stoppedItems {
+      switch item {
+      case .row(let r): out.stopped.append(r)
+      case .line(let l): out.stopped += l.rows
+      }
     }
     return out
   }
@@ -367,6 +505,159 @@ final class Model {
 
   var stoppable: [UUID] { rows.running.filter(\.canStop).compactMap(\.entryID) }
 
+  /// Opens or closes a project's line in Stopped.
+  func toggleProject(_ root: String) {
+    if toggledProjects.contains(root) { toggledProjects.remove(root) } else { toggledProjects.insert(root) }
+  }
+
+  /// Stops every running server in a project.
+  func stopProject(_ root: String) {
+    for r in rows.running where r.project?.root == root && r.canStop { if let id = r.entryID { stop(id) } }
+  }
+
+  /// Stopped servers in a project, newest first.
+  func stoppedInProject(_ root: String) -> [UUID] {
+    history.stopped.filter { $0.projectRoot == root && busy[$0.id] == nil && !queued.contains($0.id) }.map(\.id)
+  }
+
+  /// Restarts every stopped server in a project, each after the ones it needs.
+  func restartProject(_ root: String) {
+    for id in stoppedInProject(root).reversed() { startWithNeeds(id) }
+  }
+
+  // MARK: Needs
+
+  /// What a server needs, as the panel shows it: port, name if known, and whether something listens there.
+  struct Need: Equatable, Identifiable {
+    let port: UInt16
+    let name: String?
+    let running: Bool
+    var id: UInt16 { port }
+  }
+
+  /// What it calls itself, for the Needs menu.
+  func directNeeds(of id: UUID) -> [Need] {
+    guard let e = history[id] else { return [] }
+    return e.neededPorts.map { p in Need(port: p, name: entry(forPort: p, near: e)?.name, running: listening(p)) }
+  }
+
+  /// Everything down the chain: what it needs, then what those need, each once.
+  func needs(of id: UUID) -> [Need] {
+    guard let first = history[id] else { return [] }
+    var out: [Need] = []
+    var seen = Set(first.ports)
+    var queue: [(port: UInt16, near: HistoryEntry)] = first.neededPorts.map { ($0, first) }
+    while !queue.isEmpty {
+      let (p, near) = queue.removeFirst()
+      guard seen.insert(p).inserted else { continue }
+      let e = entry(forPort: p, near: near)
+      out.append(Need(port: p, name: e?.name, running: listening(p)))
+      if let e { queue += e.neededPorts.map { ($0, e) } }
+    }
+    return out
+  }
+
+  /// The servers that need this one, running first.
+  func neededBy(_ id: UUID) -> [Need] {
+    guard let e = history[id] else { return [] }
+    var seen = Set<UInt16>()
+    let users = history.entries
+      .filter { $0.id != id && $0.neededPorts.contains(e.port) }
+      .sorted { ($0.isRunning ? 0 : 1, $1.lastSeenAt) < ($1.isRunning ? 0 : 1, $0.lastSeenAt) }
+    return users.compactMap { u in seen.insert(u.port).inserted ? Need(port: u.port, name: u.name, running: u.isRunning) : nil }
+  }
+
+  /// The stopped servers a restart would start first, as ports.
+  func stoppedNeeds(of id: UUID) -> [UInt16] {
+    needOrder(id).dropLast().compactMap { history[$0]?.port }
+  }
+
+  /// The help tag on a button: what Restart will start with it, or how many a project's button acts on.
+  func buttonTip(_ button: String) -> String {
+    guard let colon = button.lastIndex(of: ":"), let action = RowAction(rawValue: String(button[button.index(after: colon)...])) else { return "" }
+    let id = String(button.dropFirst(4)[..<colon])
+    if id.hasPrefix("proj:") {
+      let root = String(id.dropFirst(5))
+      let n = rows.running.filter { $0.project?.root == root && $0.canStop }.count
+      return "Stop \(n) in \(projectName(root))"
+    }
+    if id.hasPrefix("line:") {
+      let root = String(id.dropFirst(5))
+      return "Restart \(stoppedInProject(root).count) in \(projectName(root))"
+    }
+    guard action == .restart, let row = rows.row(id), row.group == .stopped, let e = row.entryID else { return action.title }
+    let first = stoppedNeeds(of: e)
+    guard !first.isEmpty else { return action.title }
+    let ports = first.map(String.init)
+    let list = ports.count == 1 ? ports[0] : ports.dropLast().joined(separator: ", ") + " and " + ports.last!
+    return "Restart with \(list)"
+  }
+
+  /// What VoiceOver adds to a row: the page's title and what it needs.
+  func accessibilityDetail(_ row: Row) -> String {
+    guard let e = row.entryID.flatMap({ history[$0] }) else { return "" }
+    var parts: [String] = []
+    if let t = e.title { parts.append(t) }
+    let needs = e.neededPorts.map(String.init)
+    if !needs.isEmpty { parts.append("needs " + needs.joined(separator: ", ")) }
+    return parts.joined(separator: ", ")
+  }
+
+  /// Ticks or unticks a port in a server's Needs menu.
+  func toggleNeed(_ id: UUID, port: UInt16) {
+    guard var e = history[id] else { return }
+    var added = Set(e.needsAdded ?? []), removed = Set(e.needsRemoved ?? [])
+    if e.neededPorts.contains(port) {
+      if added.contains(port) { added.remove(port) } else { removed.insert(port) }
+    } else {
+      if removed.contains(port) { removed.remove(port) } else { added.insert(port) }
+    }
+    e.needsAdded = added.isEmpty ? nil : added.sorted()
+    e.needsRemoved = removed.isEmpty ? nil : removed.sorted()
+    history[id] = e
+    save()
+  }
+
+  /// Other servers in the same project, one per port, for the Needs menu.
+  func projectNeighbours(of id: UUID) -> [Need] {
+    guard let e = history[id], let root = e.projectRoot else { return [] }
+    var seen = Set(e.ports)
+    return history.entries
+      .filter { $0.projectRoot == root && $0.id != id }
+      .sorted { $0.lastSeenAt > $1.lastSeenAt }
+      .compactMap { n in seen.insert(n.port).inserted ? Need(port: n.port, name: n.name, running: listening(n.port)) : nil }
+      .sorted { $0.port < $1.port }
+  }
+
+  private func listening(_ port: UInt16) -> Bool { servers.contains { $0.ports.contains(port) } }
+
+  /// The server that answers on a port: the one running there, else one from the same project, else the newest.
+  private func entry(forPort port: UInt16, near e: HistoryEntry) -> HistoryEntry? {
+    let linked = linkedIDs
+    let all = history.entries.filter { $0.id != e.id && $0.ports.contains(port) }
+    if let r = all.first(where: { linked.contains($0.id) }) { return r }
+    return all.max { a, b in
+      (a.projectRoot == e.projectRoot ? 1 : 0, a.lastSeenAt) < (b.projectRoot == e.projectRoot ? 1 : 0, b.lastSeenAt)
+    }
+  }
+
+  /// Needs first, depth first, then the server itself. Ones already listening are left out; a loop is cut where it closes.
+  private func needOrder(_ id: UUID) -> [UUID] {
+    var out: [UUID] = []
+    var seen = Set<UUID>()
+    func visit(_ id: UUID) {
+      guard seen.insert(id).inserted, let e = history[id] else { return }
+      for p in e.neededPorts where !listening(p) {
+        if let n = entry(forPort: p, near: e) { visit(n.id) }
+      }
+      out.append(id)
+    }
+    visit(id)
+    return out
+  }
+
+  private var queued: Set<UUID> { Set(chains.flatMap(\.ids)) }
+
   // MARK: Settings
 
   func setShowCount(_ on: Bool) {
@@ -400,6 +691,12 @@ final class Model {
     UserDefaults.standard.set(on, forKey: "transparent")
   }
 
+  func setShowPreviews(_ on: Bool) {
+    showPreviews = on
+    UserDefaults.standard.set(on, forKey: "showPreviews")
+    if on { queueSnapshots() } else { preview = nil }
+  }
+
   func refreshLaunchAtLogin() {
     let on = SMAppService.mainApp.status == .enabled
     if launchAtLogin != on { launchAtLogin = on }
@@ -419,9 +716,10 @@ final class Model {
   }
 
   func clearHistory() {
-    history.clearStopped(keeping: Set(busy.keys))
+    history.clearStopped(keeping: Set(busy.keys).union(queued))
     expanded = false
     save()
+    Snapshotter.clean(keeping: Set(history.entries.map(\.id)))
   }
 
   /// Forgets one stopped server, so it can't be restarted from here. Its log stays, as with Clear history.
@@ -429,6 +727,7 @@ final class Model {
   func remove(_ id: UUID) {
     let before = rows.stopped.map(\.id)
     guard busy[id] == nil, history.removeStopped(id) else { return }
+    Snapshotter.clean(keeping: Set(history.entries.map(\.id)))
     if history.stopped.isEmpty { expanded = false }
     if keyboardDriven, highlight == id.uuidString {
       let after = rows.stopped.map(\.id)
@@ -440,7 +739,10 @@ final class Model {
 
   // MARK: Scanning
 
-  func begin() { scanNow() }
+  func begin() {
+    Snapshotter.clean(keeping: Set(history.entries.map(\.id)))
+    scanNow()
+  }
 
   func scanNow() {
     timer?.invalidate()
@@ -469,7 +771,7 @@ final class Model {
   private func schedule() {
     timer?.invalidate()
     guard !scanning else { return }
-    let interval: TimeInterval = !busy.isEmpty ? 0.3 : isOpen ? 2 : 10
+    let interval: TimeInterval = !busy.isEmpty || !chains.isEmpty ? 0.3 : isOpen ? 2 : 10
     let t = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
       MainActor.assumeIsolated { self?.scanNow() }
     }
@@ -480,13 +782,18 @@ final class Model {
 
   private func apply(_ found: [Server]) {
     let now = Date()
-    let result = history.reconcile(found, spawned: spawned, now: now, firstScan: firstScan, keeping: Set(busy.keys))
-    firstScan = false
+    let result = history.reconcile(found, spawned: spawned, now: now, firstScan: firstScan, keeping: Set(busy.keys).union(queued))
     if servers != found { servers = found }
     if links != result.links { links = result.links }
     var changed = result.changed
+    if renameServedFolders() { changed = true }
     if fillProjectRoots() { changed = true }
+    if fillNeeds() { changed = true }
     assignTints()
+    let up = Set(result.links.values)
+    for id in up where cameUp[id] == nil { cameUp[id] = firstScan ? history[id]?.startedAt ?? now : now }
+    for id in cameUp.keys where !up.contains(id) { cameUp[id] = nil }
+    firstScan = false
 
     let linked = Set(result.links.values)
     for (id, b) in busy {
@@ -495,7 +802,7 @@ final class Model {
         if !linked.contains(id) {
           busy[id] = nil
           forced.remove(id)
-          if thenStart { start(id) }
+          if thenStart { startWithNeeds(id) }
         } else if !forced.contains(id), now.timeIntervalSince(since) >= 5 {
           forced.insert(id)
         }
@@ -510,11 +817,105 @@ final class Model {
         }
       }
     }
+    advanceChains()
+    queueSnapshots()
     if changed || (!result.links.isEmpty && now.timeIntervalSince(lastSave) > 60) { save() }
   }
 
+  /// Names a static server after the folder it serves, for entries saved before names followed it (see `Naming.servedFolder`).
+  private func renameServedFolders() -> Bool {
+    var changed = false
+    for e in history.entries where !namesChecked.contains(e.id) {
+      namesChecked.insert(e.id)
+      guard let served = Naming.servedFolder(command: e.command, cwd: e.commandDir), served.hasPrefix(projectHome + "/") else { continue }
+      let dir = Naming.project(cwd: served, home: projectHome).dir
+      guard dir != e.projectDir else { continue }
+      history[e.id]?.projectDir = dir
+      history[e.id]?.name = Naming.baseName(dir)
+      history[e.id]?.projectRoot = nil
+      changed = true
+    }
+    return changed
+  }
+
+  /// Looks for what each server needs, once per command.
+  private func fillNeeds() -> Bool {
+    var changed = false
+    for e in history.entries where e.needs == nil {
+      history[e.id]?.needs = Needs.ports(command: e.command, dirs: [e.commandDir, e.projectDir], own: e.ports, home: home)
+      changed = true
+    }
+    return changed
+  }
+
+  // MARK: Snapshots
+
+  /// Takes a snapshot 5 seconds after a server comes up, and again on opening the panel when it's an hour old.
+  private func queueSnapshots() {
+    guard showPreviews else { return }
+    let now = Date()
+    for (id, up) in cameUp {
+      guard busy[id] == nil, let e = history[id], !snapshotter.isBusy(id) else { continue }
+      let taken = e.snapshotAt ?? .distantPast
+      let fresh = taken < up && now.timeIntervalSince(up) >= 5
+      let stale = isOpen && now.timeIntervalSince(taken) > 3600
+      guard fresh || stale else { continue }
+      snapshotter.take(id, port: e.port, done: saveSnapshot(id))
+    }
+    // A stopped static server that never had one: read from its folder, nothing to start.
+    for e in history.stopped where e.snapshotAt == nil && !snapshotter.isBusy(e.id) {
+      guard let folder = Naming.staticFolder(command: e.command, cwd: e.commandDir),
+            FileManager.default.fileExists(atPath: folder + "/index.html") else { continue }
+      snapshotter.take(e.id, port: e.port, folder: folder, done: saveSnapshot(e.id))
+    }
+  }
+
+  private func saveSnapshot(_ id: UUID) -> @MainActor (Snapshotter.Result?) -> Void {
+    { [weak self] result in
+      guard let self, var e = self.history[id] else { return }
+      // Tried, even when it failed, so a broken page isn't loaded again on every scan.
+      if let result {
+        e.title = result.title
+        e.snapshotPath = result.path
+      }
+      e.snapshotAt = Date()
+      self.history[id] = e
+      self.save()
+    }
+  }
+
+  // MARK: Preview
+
+  /// Hover: the card opens after half a second on a row, and follows at once while it's open.
+  /// From the keyboard it opens with Space and follows the arrow keys.
+  private func updatePreview() {
+    previewTimer?.invalidate()
+    previewTimer = nil
+    guard showPreviews, let h = highlight, canPreview(h), menuRow == nil, !moreMenuOpen else {
+      if preview != nil { preview = nil }
+      return
+    }
+    if preview != nil { preview = h; return }
+    guard !keyboardDriven else { return }
+    let t = Timer(timeInterval: 0.5, repeats: false) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self, self.highlight == h, self.menuRow == nil, !self.moreMenuOpen else { return }
+        self.preview = h
+      }
+    }
+    RunLoop.main.add(t, forMode: .common)
+    previewTimer = t
+  }
+
+  func togglePreview() {
+    if preview != nil { preview = nil }
+    else if showPreviews, let h = highlight, canPreview(h) { preview = h }
+  }
+
+  private func canPreview(_ id: String) -> Bool { rows.row(id)?.entryID != nil }
+
   func save() {
-    try? history.save()
+    try? history.save(to: historyURL)
     lastSave = Date()
   }
 
@@ -522,7 +923,43 @@ final class Model {
 
   func restart(_ row: Row) {
     guard let id = row.entryID, row.canRestart else { return }
-    if row.group == .running { stop(id, thenStart: true) } else { start(id) }
+    if row.group == .running { stop(id, thenStart: true) } else { startWithNeeds(id) }
+  }
+
+  /// Starts what the server needs first, one at a time, then the server.
+  func startWithNeeds(_ id: UUID) {
+    guard busy[id] == nil, !queued.contains(id) else { return }
+    let order = needOrder(id)
+    guard order.count > 1 else { start(id); return }
+    chains.append(Chain(ids: order, since: Date()))
+    advanceChains()
+    scanNow()
+  }
+
+  /// Moves each chain on: drops servers that are up, waits for one starting, starts the next.
+  /// When one it started didn't come up, the rest fail with "Needs <port>".
+  private func advanceChains() {
+    guard !chains.isEmpty else { return }
+    let up = linkedIDs
+    var kept: [Chain] = []
+    next: for var c in chains {
+      while let head = c.ids.first {
+        if up.contains(head) || (c.ids.count > 1 && history[head].map({ listening($0.port) }) == true) {
+          c.ids.removeFirst()
+        } else if busy[head] != nil {
+          kept.append(c)
+          continue next
+        } else if c.started.contains(head) {
+          let port = history[head]?.port ?? 0
+          for id in c.ids.dropFirst() where busy[id] == nil && !up.contains(id) { fail(id, "Needs \(port)") }
+          continue next
+        } else {
+          c.started.insert(head)
+          start(head)
+        }
+      }
+    }
+    if kept.count != chains.count || zip(kept, chains).contains(where: { $0.ids != $1.ids || $0.started != $1.started }) { chains = kept }
   }
 
   func stop(_ id: UUID, thenStart: Bool = false) {
@@ -666,5 +1103,8 @@ final class Model {
     staleUnderPointer = false
     keyboardDriven = false
     expanded = false
+    toggledProjects = []
+    fullProjects = []
+    preview = nil
   }
 }

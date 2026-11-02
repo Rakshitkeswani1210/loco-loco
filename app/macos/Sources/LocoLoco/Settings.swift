@@ -116,6 +116,7 @@ struct SettingsView: View {
         Toggle("Show count in menu bar", isOn: binding(model.showCount) { model.setShowCount($0) })
         Toggle("Show app and macOS servers", isOn: binding(model.showAll) { model.setShowAll($0) })
         Toggle("Group by project", isOn: binding(model.groupByProject) { model.setGroupByProject($0) })
+        Toggle("Show previews", isOn: binding(model.showPreviews) { model.setShowPreviews($0) })
       }
       Section {
         Picker("Appearance", selection: binding(model.appearance) { model.setAppearance($0) }) {

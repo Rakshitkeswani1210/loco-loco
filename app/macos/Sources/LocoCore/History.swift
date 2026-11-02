@@ -24,9 +24,25 @@ public struct HistoryEntry: Codable, Sendable, Identifiable, Hashable {
   /// Why the last restart failed. Shown in red in place of the time.
   public var failure: String?
   public var logPath: String?
+  /// Ports found in its start command, script and .env files (see `Needs`). Nil until looked for, and again when the command changes.
+  public var needs: [UInt16]?
+  /// Ports found in its environment while it ran (see `Server.envNeeds`).
+  public var envNeeds: [UInt16]?
+  /// Ports ticked and unticked by hand in the Needs menu. They win over what was found.
+  public var needsAdded: [UInt16]?
+  public var needsRemoved: [UInt16]?
+  /// The page's title and when its snapshot was taken (see `Snapshotter`).
+  public var title: String?
+  public var snapshotAt: Date?
+  /// The address the snapshot shows, when it isn't the root: an API's /docs.
+  public var snapshotPath: String?
 
   public var port: UInt16 { ports.first ?? 0 }
   public var isRunning: Bool { stoppedAt == nil }
+  /// The ports this server needs: found or ticked, minus unticked and its own.
+  public var neededPorts: [UInt16] {
+    Set(needs ?? []).union(envNeeds ?? []).union(needsAdded ?? []).subtracting(needsRemoved ?? []).subtracting(ports).sorted()
+  }
   var key: String { commandDir + "\u{0}" + command }
   /// The same project on the same port is the same server, whatever command started it.
   var identity: String { projectDir + "\u{0}" + String(port) }
@@ -43,6 +59,7 @@ public struct HistoryEntry: Codable, Sendable, Identifiable, Hashable {
     lastSeenAt = now
     root = s.root
     procs = s.processes
+    envNeeds = s.envNeeds.isEmpty ? nil : s.envNeeds
   }
 }
 
@@ -114,6 +131,7 @@ public struct History: Sendable {
       if e.failure != nil { e.failure = nil; changed = true }
       if e.ports != s.ports { e.ports = s.ports; changed = true }
       if e.path == nil, s.path != nil { e.path = s.path; changed = true }
+      if !s.envNeeds.isEmpty, e.envNeeds != s.envNeeds { e.envNeeds = s.envNeeds; changed = true }
       e.procs = s.processes
       e.lastSeenAt = now
       entries[i] = e
@@ -144,6 +162,7 @@ public struct History: Sendable {
       if let i = free.filter({ entries[$0].key == s.key }).max(by: newest) {
         link(s, i)
       } else if let i = free.filter({ entries[$0].identity == s.identity }).max(by: newest) {
+        if entries[i].key != s.key { entries[i].needs = nil }
         entries[i].command = s.command
         entries[i].commandDir = s.commandDir
         entries[i].path = s.path
@@ -164,7 +183,7 @@ public struct History: Sendable {
     return (links, changed)
   }
 
-  /// The newest `limit` stopped entries, one per folder and command and one per project and port.
+  /// The newest `limit` stopped entries, one per folder and command and one per project and port, and the ones they need.
   /// A stopped entry for a server that's running again goes. `keep` is never removed.
   @discardableResult
   public mutating func prune(keeping keep: Set<UUID> = []) -> Bool {
@@ -178,6 +197,18 @@ public struct History: Sendable {
       claimed.insert(e.key)
       claimed.insert(e.identity)
       kept.insert(e.id)
+    }
+    // A server that a kept one needs stays too, past the limit, so Restart can still bring it up.
+    var covered = Set(entries.filter { $0.isRunning || kept.contains($0.id) }.flatMap(\.ports))
+    var needed = Set(entries.filter { $0.isRunning || kept.contains($0.id) }.flatMap(\.neededPorts))
+    while let e = stopped.first(where: {
+      !kept.contains($0.id) && needed.contains($0.port) && !covered.contains($0.port) && !claimed.contains($0.key) && !claimed.contains($0.identity)
+    }) {
+      claimed.insert(e.key)
+      claimed.insert(e.identity)
+      kept.insert(e.id)
+      covered.insert(e.port)
+      needed.formUnion(e.neededPorts)
     }
     let before = entries.count
     entries.removeAll { !$0.isRunning && !kept.contains($0.id) && !keep.contains($0.id) }

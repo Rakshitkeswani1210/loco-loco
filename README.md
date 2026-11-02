@@ -40,6 +40,9 @@ To update, quit Loco Loco and unzip the new version over the old folder.
 - Right-click a row for Copy URL, Show in Finder (File Explorer on Windows), Open in Terminal, Show log, and Open in Cursor if you have Cursor.
 - To forget a stopped server, right-click it and choose Remove from history, or select it with the arrow keys and press ⌘⌫. Clear history… in the ··· menu forgets them all.
 - On the Mac, each row shows its project in a coloured label. The project is the first folder in Documents, Desktop or Downloads (or in your home folder), and a git worktree shows the project of its main repo. Right-click a row and choose Rename project… to give it a shorter name.
+- On the Mac, hover a row for a card with a snapshot of the page, its title, and the servers it needs. Space shows it from the keyboard. A stopped static site shows its page too, read from its folder.
+- On the Mac, Restart starts what a server needs first, one at a time: a frontend's API, then the frontend. Loco Loco finds them in the start command, its script, its .env files and its environment. Right-click › Needs fixes a wrong guess.
+- On the Mac, Stopped is grouped by project: a project with two or more stopped servers is one line you click to open. Hover a project's label to stop or restart all of it.
 - On the Mac, the ··· menu has Stop all…, Clear history…, Settings… (⌘,) and Quit.
 - Settings has Launch at login, the menu bar count, which servers to show, Group by project (puts running servers under a header for each project), Appearance (System, Light or Dark), Transparent background (Liquid Glass), the keyboard shortcut and how much history to keep.
 - On Windows, the ··· menu has Stop all, Start with Windows and the other settings, and right-clicking the octopus gives Open Loco Loco, Stop all… and Quit Loco Loco.
@@ -48,14 +51,14 @@ Loco Loco lists processes that listen on a port and run from a folder inside you
 
 ## Your data
 
-Everything stays on your computer. For each stopped server, the history keeps the folder, command, port and PATH, and no other environment variables.
+Everything stays on your computer. For each stopped server, the history keeps the folder, command, port and PATH, and no other environment variables. On the Mac it also keeps the page's title and the ports a server needs (ports only, never the values they came from).
 
-- Mac history: `~/Library/Application Support/Loco Loco/history.json`. Restart output: `~/Library/Logs/Loco Loco/`
+- Mac history: `~/Library/Application Support/Loco Loco/history.json`. Restart output: `~/Library/Logs/Loco Loco/`. Page snapshots: `~/Library/Caches/Loco Loco/Snapshots/`
 - Windows history: `%LOCALAPPDATA%\Loco Loco\history.json`. Restart output: `%LOCALAPPDATA%\Loco Loco\Logs\`
 
 ## Uninstall
 
-- Mac: choose Quit Loco Loco from the ··· menu, then delete `~/Applications/Loco Loco.app` and the two folders above.
+- Mac: choose Quit Loco Loco from the ··· menu, then delete `~/Applications/Loco Loco.app` and the three folders above.
 - Windows: turn off Start with Windows in the ··· menu, choose Quit Loco Loco, then delete the `Loco Loco` folder you unzipped and `%LOCALAPPDATA%\Loco Loco`.
 
 ## Develop
