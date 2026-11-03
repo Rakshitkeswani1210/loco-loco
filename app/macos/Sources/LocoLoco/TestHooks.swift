@@ -160,6 +160,13 @@ final class TestHooks: NSObject {
         move(to: CGPoint(x: r.midX, y: r.midY))
       }
     case "boardShot" where a.count == 2: boardShot(a[1])
+    // Renders a window as AppKit draws it, which needs no screen recording permission.
+    case "viewShot" where a.count == 3:
+      guard let view = (a[1] == "preview" ? controller.previewWindow : panel).contentView,
+            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { break }
+      view.cacheDisplay(in: view.bounds, to: rep)
+      try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: a[2]))
+    case "tab" where a.count == 2: model.setTab(PanelTab(rawValue: a[1]) ?? .local)
     case "previews" where a.count == 2: model.setShowPreviews(a[1] == "on")
     case "btn" where a.count == 2: button(a[1])
     case "menuButton": if let r = model.frames["menu"] { move(to: CGPoint(x: r.midX, y: r.midY)) }
@@ -493,6 +500,9 @@ final class TestHooks: NSObject {
       "groups": (rows.groups ?? []).map { ["name": $0.tag.name, "tint": $0.tag.tint ?? -1, "ports": $0.rows.map { Int($0.port) }] },
       "highlight": model.highlight ?? "", "hot": model.hot ?? "", "stale": model.staleUnderPointer,
       "expanded": model.expanded, "scrolls": model.scrolls,
+      "tab": model.tab.rawValue, "copied": model.copied ?? "",
+      "hosted": model.hosted.map { g in ["project": g.tag?.name ?? "", "links": g.rows.map { $0.link.title }] as [String: Any] },
+      "clipboard": NSPasteboard.general.string(forType: .string) ?? "",
       "order": rows.order, "preview": model.preview ?? "", "tip": model.hot.map { model.buttonTip($0) } ?? "", "previewVisible": controller.previewWindow.isVisible,
       "previewFrame": [controller.previewWindow.frame.minX, controller.previewWindow.frame.minY, controller.previewWindow.frame.width, controller.previewWindow.frame.height],
       "chains": model.chains.map { $0.ids.compactMap { model.history[$0]?.port }.map(Int.init) },

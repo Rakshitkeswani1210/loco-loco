@@ -6,7 +6,7 @@ import ServiceManagement
 enum RowGroup: Sendable { case running, stopped }
 
 enum RowAction: String, Sendable {
-  case stop, restart, log, force, remove
+  case stop, restart, log, force, remove, copy
 
   var symbol: String {
     switch self {
@@ -15,6 +15,7 @@ enum RowAction: String, Sendable {
     case .log: "doc.text"
     case .force: "xmark.octagon"
     case .remove: "trash"
+    case .copy: "doc.on.doc"
     }
   }
 
@@ -28,6 +29,7 @@ enum RowAction: String, Sendable {
     case .log: "Show log"
     case .force: "Force stop"
     case .remove: "Remove from history"
+    case .copy: "Copy link"
     }
   }
 }
@@ -182,6 +184,23 @@ struct Rows: Equatable {
   }
 }
 
+enum PanelTab: String { case local, hosted }
+
+/// One hosted link in the panel.
+struct HostedRow: Identifiable, Equatable {
+  let link: HostedLink
+  let tag: ProjectTag?
+  var id: String { "link:" + link.url }
+}
+
+/// Hosted links from one project, under its label. With Group by project off, one group with no header.
+struct HostedGroup: Identifiable, Equatable {
+  let tag: ProjectTag?
+  var rows: [HostedRow]
+  var id: String { tag.map { $0.root ?? "\u{0}other" } ?? "\u{0}all" }
+  var headerID: String? { tag?.root.map { "hproj:" + $0 } }
+}
+
 /// What the panel asks the controller to do.
 enum Command {
   case primary(String)
@@ -239,6 +258,7 @@ final class Model {
   private(set) var launchAtLogin = false
   /// A card with a snapshot of the page beside the panel, on hover.
   private(set) var showPreviews: Bool
+  private(set) var tab: PanelTab
 
   // MARK: Servers and history
 
@@ -249,6 +269,10 @@ final class Model {
   private(set) var forced: Set<UUID> = []
   /// Restarts waiting on the servers they need, needs first.
   private(set) var chains: [Chain] = []
+  /// Hosted demos, hidden ones included.
+  private(set) var hostedLinks: [HostedLink] = []
+  /// The link just copied, or project header, which shows a check for a moment.
+  private(set) var copied: String?
   var expanded = false
   /// Stopped project lines opened or closed by hand, by project folder, until the panel closes.
   /// A line whose newest server didn't start opens by itself, so this flips it.
@@ -287,12 +311,17 @@ final class Model {
   @ObservationIgnored var isOpen = false {
     didSet {
       guard isOpen != oldValue else { return }
-      if isOpen { scanNow() } else { schedule() }
+      if isOpen { scanNow(); recheckLinks() } else { schedule() }
     }
   }
 
   @ObservationIgnored private var timer: Timer?
   @ObservationIgnored private var previewTimer: Timer?
+  @ObservationIgnored private var lastLinkWalk = Date.distantPast
+  @ObservationIgnored private var walkingLinks = false
+  /// The newest change in Rayfin's logs: seen, and the one a walk has answered. It walks once the logs go quiet.
+  @ObservationIgnored private var logStamp: Date?
+  @ObservationIgnored private var walkedStamp: Date?
   /// Old jobs were dropped from history on launch, so it needs saving.
   @ObservationIgnored private var clearedTasks = false
   @ObservationIgnored let snapshotter = Snapshotter()
@@ -321,6 +350,12 @@ final class Model {
     #endif
     return History.defaultURL
   }()
+  @ObservationIgnored private let linksURL: URL = {
+    #if TEST_HOOKS
+    if let h = ProcessInfo.processInfo.environment["LOCO_LINKS"] { return URL(fileURLWithPath: h) }
+    #endif
+    return Hosted.defaultURL
+  }()
   /// Project folders found this session, by server folder. Nil when a folder has none.
   @ObservationIgnored private var rootCache: [String: String?] = [:]
 
@@ -329,6 +364,7 @@ final class Model {
     d.register(defaults: [
       "showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false, "shortcut": Shortcut.standard.storage,
       "appearance": Appearance.system.rawValue, "transparent": false, "showPreviews": true,
+      "panelTab": PanelTab.local.rawValue,
     ])
     showCount = d.bool(forKey: "showCount")
     showAll = d.bool(forKey: "showAll")
@@ -340,9 +376,11 @@ final class Model {
     appearance = Appearance(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
     transparent = d.bool(forKey: "transparent")
     showPreviews = d.bool(forKey: "showPreviews")
+    tab = PanelTab(rawValue: d.string(forKey: "panelTab") ?? "") ?? .local
     history = History(entries: [], limit: d.integer(forKey: "historyLimit"))
     history = History(entries: History.load(from: historyURL), limit: historyLimit)
     clearedTasks = history.removeTasks() > 0
+    hostedLinks = Hosted.load(from: linksURL)
   }
 
   // MARK: Rows
@@ -528,6 +566,161 @@ final class Model {
     for id in stoppedInProject(root).reversed() { startWithNeeds(id) }
   }
 
+  private var snapshotIDs: Set<UUID> { Set(history.entries.map(\.id)).union(hostedLinks.map(\.id)) }
+
+  // MARK: Hosted
+
+  var hosted: [HostedGroup] {
+    let shown = hostedLinks.filter { $0.hidden != true }.sorted {
+      ($0.deployedAt ?? .distantPast, $1.title) > ($1.deployedAt ?? .distantPast, $0.title)
+    }
+    func root(_ l: HostedLink) -> String? { l.folder.flatMap { Naming.projectRoot(dir: $0, home: projectHome) } }
+    guard groupByProject else {
+      return shown.isEmpty ? [] : [HostedGroup(tag: nil, rows: shown.map { HostedRow(link: $0, tag: tag(root($0))) })]
+    }
+    var groups: [HostedGroup] = []
+    var other: [HostedRow] = []
+    for l in shown {
+      guard let t = tag(root(l)) else { other.append(HostedRow(link: l, tag: nil)); continue }
+      if let i = groups.firstIndex(where: { $0.tag?.name == t.name }) { groups[i].rows.append(HostedRow(link: l, tag: t)) }
+      else { groups.append(HostedGroup(tag: t, rows: [HostedRow(link: l, tag: t)])) }
+    }
+    if !other.isEmpty { groups.append(HostedGroup(tag: ProjectTag(root: nil, name: "Other", tint: nil), rows: other)) }
+    return groups
+  }
+
+  var hostedCount: Int { hostedLinks.filter { $0.hidden != true }.count }
+
+  func link(_ id: String?) -> HostedLink? {
+    guard let id, id.hasPrefix("link:") else { return nil }
+    return hostedLinks.first { $0.url == id.dropFirst(5) }
+  }
+
+  func setTab(_ t: PanelTab) {
+    guard t != tab else { return }
+    tab = t
+    highlight = nil
+    hot = nil
+    UserDefaults.standard.set(t.rawValue, forKey: "panelTab")
+  }
+
+  private func saveLinks() { try? Hosted.save(hostedLinks, to: linksURL) }
+
+  /// Walks Documents for deploy files, off the main thread.
+  func walkLinks() {
+    guard !walkingLinks else { return }
+    walkingLinks = true
+    lastLinkWalk = Date()
+    let root = projectHome + "/Documents"
+    Task.detached(priority: .utility) { [weak self] in
+      let found = Hosted.find(under: root)
+      await self?.linksFound(found)
+    }
+  }
+
+  private func linksFound(_ found: [HostedLink]) {
+    walkingLinks = false
+    updateLinks(found)
+  }
+
+  private func updateLinks(_ found: [HostedLink]) {
+    let merged = Hosted.merge(saved: hostedLinks, found: found)
+    guard merged != hostedLinks else { return }
+    hostedLinks = merged
+    saveLinks()
+  }
+
+  /// A walk on launch and hourly, and after a deploy: Rayfin writes a log as it runs, so one goes when the log goes quiet.
+  private func checkLinks(now: Date) {
+    let logs = NSHomeDirectory() + "/.rayfin/logs"
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: logs)) ?? []
+    let stamp = names.compactMap { (try? FileManager.default.attributesOfItem(atPath: logs + "/" + $0))?[.modificationDate] as? Date }.max()
+    let quiet = stamp != nil && stamp == logStamp && stamp != walkedStamp
+    if quiet, walkedStamp != nil { walkLinks() }
+    if quiet { walkedStamp = stamp }
+    logStamp = stamp
+    if now.timeIntervalSince(lastLinkWalk) > 3600 { walkLinks() }
+  }
+
+  /// On opening the panel, the known projects again. Reading them is quick.
+  private func recheckLinks() {
+    updateLinks(Set(hostedLinks.compactMap(\.folder)).flatMap(Hosted.read(folder:)))
+  }
+
+  func addLink(url: String, name: String) {
+    let url = url.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let parsed = URL(string: url), parsed.scheme?.hasPrefix("http") == true, let host = parsed.host else { return }
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let i = hostedLinks.firstIndex(where: { $0.url == url }) {
+      hostedLinks[i].hidden = nil
+      if !name.isEmpty { hostedLinks[i].customName = name }
+    } else {
+      hostedLinks.append(HostedLink(url: url, name: name.isEmpty ? host : name))
+    }
+    saveLinks()
+  }
+
+  func renameLink(_ url: String, to name: String) {
+    guard let i = hostedLinks.firstIndex(where: { $0.url == url }) else { return }
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    hostedLinks[i].customName = name.isEmpty || name == hostedLinks[i].name ? nil : name
+    saveLinks()
+  }
+
+  func hideLink(_ url: String) {
+    guard let i = hostedLinks.firstIndex(where: { $0.url == url }) else { return }
+    hostedLinks[i].hidden = true
+    saveLinks()
+  }
+
+  /// Plain links. With `named`, also as hyperlinks, which is what Teams and Outlook paste.
+  func copy(_ items: [HostedLink], named: Bool = false, mark: String? = nil) {
+    let board = NSPasteboard.general
+    board.clearContents()
+    if named || items.count > 1 {
+      func escape(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+      }
+      let html = items.map { "<a href=\"\($0.url)\">\(escape($0.title))</a>" }.joined(separator: "<br>")
+      board.declareTypes([.html, .string], owner: nil)
+      board.setString(html, forType: .html)
+      board.setString(items.map { "\($0.title): \($0.url)" }.joined(separator: "\n"), forType: .string)
+    } else if let url = items.first?.url {
+      board.setString(url, forType: .string)
+    }
+    guard let mark else { return }
+    copied = mark
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+      if self?.copied == mark { self?.copied = nil }
+    }
+  }
+
+  func linksInProject(_ root: String) -> [HostedLink] {
+    hosted.first { $0.tag?.root == root }?.rows.map(\.link) ?? []
+  }
+
+  /// The local server behind a link: one in its folder, else on a port from its rayfin.yml. Running ones first.
+  func localEntry(for l: HostedLink) -> HistoryEntry? {
+    let up = linkedIDs
+    let ports = Set(l.ports ?? []).subtracting(Hosted.genericPorts)
+    let inFolder: (HistoryEntry) -> Bool = { e in
+      guard let f = l.folder else { return false }
+      return e.commandDir == f || e.commandDir.hasPrefix(f + "/") || e.projectDir == f
+    }
+    let found = history.entries.filter(inFolder)
+    let all = found.isEmpty ? history.entries.filter { !ports.isDisjoint(with: $0.ports) } : found
+    return all.max { a, b in
+      (up.contains(a.id) ? 1 : 0, a.lastSeenAt) < (up.contains(b.id) ? 1 : 0, b.lastSeenAt)
+    }
+  }
+
+  func isUp(_ e: HistoryEntry) -> Bool { linkedIDs.contains(e.id) }
+
+  /// The hosted link of a local server, for its card and menu.
+  func hostedLink(for e: HistoryEntry) -> HostedLink? {
+    hostedLinks.filter { $0.hidden != true }.first { localEntry(for: $0)?.id == e.id }
+  }
+
   // MARK: Needs
 
   /// What a server needs, as the panel shows it: port, name if known, and whether something listens there.
@@ -587,6 +780,10 @@ final class Model {
     if id.hasPrefix("line:") {
       let root = String(id.dropFirst(5))
       return "Restart \(stoppedInProject(root).count) in \(projectName(root))"
+    }
+    if id.hasPrefix("hproj:") {
+      let root = String(id.dropFirst(6))
+      return "Copy \(linksInProject(root).count) links in \(projectName(root))"
     }
     guard action == .restart, let row = rows.row(id), row.group == .stopped, let e = row.entryID else { return action.title }
     let first = stoppedNeeds(of: e)
@@ -722,7 +919,7 @@ final class Model {
     history.clearStopped(keeping: Set(busy.keys).union(queued))
     expanded = false
     save()
-    Snapshotter.clean(keeping: Set(history.entries.map(\.id)))
+    Snapshotter.clean(keeping: snapshotIDs)
   }
 
   /// Forgets one stopped server, so it can't be restarted from here. Its log stays, as with Clear history.
@@ -730,7 +927,7 @@ final class Model {
   func remove(_ id: UUID) {
     let before = rows.stopped.map(\.id)
     guard busy[id] == nil, history.removeStopped(id) else { return }
-    Snapshotter.clean(keeping: Set(history.entries.map(\.id)))
+    Snapshotter.clean(keeping: snapshotIDs)
     if history.stopped.isEmpty { expanded = false }
     if keyboardDriven, highlight == id.uuidString {
       let after = rows.stopped.map(\.id)
@@ -744,7 +941,8 @@ final class Model {
 
   func begin() {
     if clearedTasks { save() }
-    Snapshotter.clean(keeping: Set(history.entries.map(\.id)))
+    Snapshotter.clean(keeping: snapshotIDs)
+    walkLinks()
     scanNow()
   }
 
@@ -825,6 +1023,7 @@ final class Model {
     }
     advanceChains()
     queueSnapshots()
+    checkLinks(now: now)
     if changed || (!result.links.isEmpty && now.timeIntervalSince(lastSave) > 60) { save() }
   }
 
@@ -867,6 +1066,16 @@ final class Model {
       let stale = isOpen && now.timeIntervalSince(taken) > 3600
       guard fresh || stale else { continue }
       snapshotter.take(id, port: e.port, done: saveSnapshot(id))
+    }
+    // A hosted link: its built site, read from its folder, once per deploy. The page itself needs a sign-in.
+    for l in hostedLinks where !snapshotter.isBusy(l.id) && (l.snapshotAt ?? .distantPast) < (l.deployedAt ?? .distantPast) {
+      guard let folder = l.folder, let build = l.buildFolder, case let site = folder + "/" + build,
+            FileManager.default.fileExists(atPath: site + "/index.html") else { continue }
+      snapshotter.take(l.id, port: 0, folder: site) { [weak self] _ in
+        guard let self, let i = self.hostedLinks.firstIndex(where: { $0.id == l.id }) else { return }
+        self.hostedLinks[i].snapshotAt = Date()
+        self.saveLinks()
+      }
     }
     // A stopped static server that never had one: read from its folder, nothing to start.
     for e in history.stopped where e.snapshotAt == nil && !snapshotter.isBusy(e.id) {
@@ -918,7 +1127,7 @@ final class Model {
     else if showPreviews, let h = highlight, canPreview(h) { preview = h }
   }
 
-  private func canPreview(_ id: String) -> Bool { rows.row(id)?.entryID != nil }
+  private func canPreview(_ id: String) -> Bool { rows.row(id)?.entryID != nil || link(id) != nil }
 
   func save() {
     try? history.save(to: historyURL)
@@ -1088,7 +1297,7 @@ final class Model {
   }
 
   func moveHighlight(_ delta: Int) {
-    let order = rows.order
+    let order = tab == .local ? rows.order : hosted.flatMap(\.rows).map(\.id)
     guard !order.isEmpty else { return }
     keyboardDriven = true
     hot = nil

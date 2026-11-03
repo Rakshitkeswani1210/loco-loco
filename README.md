@@ -43,7 +43,8 @@ To update, quit Loco Loco and unzip the new version over the old folder.
 - On the Mac, hover a row for a card with a snapshot of the page, its title, and the servers it needs. Space shows it from the keyboard. A stopped static site shows its page too, read from its folder.
 - On the Mac, Restart starts what a server needs first, one at a time: a frontend's API, then the frontend. Loco Loco finds them in the start command, its script, its .env files and its environment. Right-click › Needs fixes a wrong guess.
 - On the Mac, Stopped is grouped by project: a project with two or more stopped servers is one line you click to open. Hover a project's label to stop or restart all of it.
-- On the Mac, the ··· menu has Stop all…, Clear history…, Settings… (⌘,) and Quit.
+- On the Mac, the Hosted tab lists your Rayfin demos, found from each project's `rayfin` folder under Documents. Click one to open it, hover for Copy, or hover a project's label to copy all its links. Right-click for Copy name and link, which pastes as a hyperlink in Teams and Outlook, Open in Fabric, Rename… and Hide. Add link… in the ··· menu takes any other link.
+- On the Mac, the ··· menu has Stop all…, Clear history…, Add link…, Settings… (⌘,) and Quit.
 - Settings has Launch at login, the menu bar count, which servers to show, Group by project (puts running servers under a header for each project), Appearance (System, Light or Dark), Transparent background (Liquid Glass), the keyboard shortcut and how much history to keep.
 - On Windows, the ··· menu has Stop all, Start with Windows and the other settings, and right-clicking the octopus gives Open Loco Loco, Stop all… and Quit Loco Loco.
 
@@ -51,9 +52,9 @@ Loco Loco lists processes that listen on a port and run from a folder inside you
 
 ## Your data
 
-Everything stays on your computer. For each stopped server, the history keeps the folder, command, port and PATH, and no other environment variables. On the Mac it also keeps the page's title and the ports a server needs (ports only, never the values they came from).
+Everything stays on your computer. For each stopped server, the history keeps the folder, command, port and PATH, and no other environment variables. On the Mac it also keeps the page's title and the ports a server needs (ports only, never the values they came from). The Hosted tab reads only the URL, date and Fabric link from Rayfin's deploy file and the name and ports from `rayfin.yml`. It never reads your Rayfin sign-in or `.env`, and makes no network calls.
 
-- Mac history: `~/Library/Application Support/Loco Loco/history.json`. Restart output: `~/Library/Logs/Loco Loco/`. Page snapshots: `~/Library/Caches/Loco Loco/Snapshots/`
+- Mac history: `~/Library/Application Support/Loco Loco/history.json`. Restart output: `~/Library/Logs/Loco Loco/`. Hosted links: `links.json` in the same folder as the history. Page snapshots: `~/Library/Caches/Loco Loco/Snapshots/`
 - Windows history: `%LOCALAPPDATA%\Loco Loco\history.json`. Restart output: `%LOCALAPPDATA%\Loco Loco\Logs\`
 
 ## Uninstall

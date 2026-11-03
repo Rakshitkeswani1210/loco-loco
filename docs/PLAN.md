@@ -80,6 +80,16 @@ Approved on Nov 2 with every proposed answer, from a plan page with mocks of eig
 - **Project actions.** Hovering a project label in Running shows Stop ("Stop 6 in Acme"), with no confirmation, like a row's Stop. Hovering a project line in Stopped shows Restart, which starts them in needs order and asks first when it's more than 5. Both are in the label's right-click menu, with Rename project….
 - **Names.** A static server is named after the folder it serves: `--directory X` or `-d X` for `http.server`, the folder argument of `serve` and `http-server`. Entries already in history are renamed on the next scan.
 
+## Hosted links (Iteration 5, Mac only)
+
+Approved on Nov 3 with every proposed answer. A Local and Hosted tab row sits at the top of the panel, with the ··· button on it. The panel reopens on the last tab, and Tab switches.
+
+- **Finding links.** Every Rayfin deploy writes `rayfin/.deployments.json` with the URL and date; `rayfin.yml` has the name, local ports and build folder. A background walk of `~/Documents` (about 4 seconds) reads those on launch, hourly, and once Rayfin's logs go quiet after a deploy. Opening the panel rereads the known projects. Only those fields are read. `rayfin/.env`, `~/.rayfin/auth.json` and the keys in the deploy file are never kept. No network calls.
+- **The list.** `links.json` keeps URL, name, folder, date and Fabric link, so a link outlives its folder. One row per URL, the newest deploy wins. Rows follow Group by project, newest deploy first, with no port. Click opens. Copy takes the date's place on hover and turns into a green check for a moment; ⌘C does the same. A project label's Copy takes all its links as hyperlinks.
+- **Right-click.** Open in browser, Copy link, Copy name and link, Open in Fabric, Start local server (or Open localhost:<port>), Show in Finder, Rename…, Hide. A new deploy brings back a hidden link. Add link… in the ··· menu takes any link, with one on the clipboard filled in.
+- **Local and hosted.** Matched by folder, then by a port in `rayfin.yml` other than Vite's defaults (5173, 5174). A link's card shows the local server, and a server's card shows its link, with Open and Copy hosted link in its menu.
+- **Snapshots.** Hosted pages answer 401 when signed out, so the card shows the local build, taken once per deploy from `rayfin.yml`'s build folder. A small URL handler serves the folder, because a Next.js export asks for `/_next/…` from the root and loses its styles as plain files. With no build, the matching server's snapshot, else no picture.
+
 ## How it works
 
 **Finding servers**
@@ -187,6 +197,8 @@ The octopus, checked the same way: the menu bar glyph awake and asleep (3pt to t
 Previews, needs and project lines, checked on Nov 2 with a `--test-hooks` build pointed at a copy of history (`LOCO_HISTORY`) and three demo servers in a temp folder (web → api → mock, the API started by a script with a CORS list): needs found for every real server and the demo; the card on a running page, an API's `/docs`, a stopped deck read from its folder, and in dark; restart in order (mock starting, api and web Queued, all up in 1.5 seconds); the API's script removed, so it exits with 127 and web says "Needs 18002" while mock keeps running; the demo page's POST never reached its server; project Stop on hover (not clicked) and both help tags; the Needs submenu for 3102 (8002 ticked, the rest of the project below); the Settings switch. 43 unit tests pass. Not run: Restart all on a project, and the right-click menu's picture (its items were read instead).
 
 Jobs, checked on Nov 3 with a `--test-hooks` build on a copy of the real history: 40 stopped rows went (57 to 17 entries, Stopped from 51 to 11), the 6 running servers stayed; a script on a random port stayed out of Running and history and showed under "Show app and macOS servers"; an old entry on a random port restarted and stayed up through 20 seconds of scans. One restart failed with "Address already in use" on a port that nothing was accepting on, most likely another app's outgoing connection. That can happen to any fixed choice in the random range. 49 unit tests pass.
+
+Hosted links, checked on Nov 3 with a `--test-hooks` build on copies of the data and three real projects in a temp home folder: found, grouped and saved with no keys in `links.json`; the card with a styled Next.js snapshot from its build folder; Copy to the clipboard with the check; project Copy as HTML and plain text; a server's card with its Hosted line. A walk of the real Documents found 12 deployments and 10 unique links in 4.3 seconds. 55 unit tests pass. Not run: Add link and Rename… alerts, the right-click menu's picture, and a real deploy being picked up.
 
 ## Open questions
 

@@ -2,27 +2,64 @@ import AppKit
 import LocoCore
 import SwiftUI
 
-/// What the preview window shows: the card for the row in `model.preview`, or nothing.
+/// What the preview window shows: the card for the row or link in `model.preview`, or nothing.
 struct PreviewRoot: View {
   let model: Model
 
   var body: some View {
-    if let id = model.preview, let row = model.rows.row(id), let entryID = row.entryID, let e = model.history[entryID] {
+    if let link = model.link(model.preview) {
+      let local = model.localEntry(for: link)
+      let own = SnapshotImages.image(for: link.id, taken: link.snapshotAt)
       PreviewCard(
-        row: row, entry: e, image: SnapshotImages.image(for: entryID, taken: e.snapshotAt),
-        needs: model.needs(of: entryID), neededBy: model.neededBy(entryID), transparent: model.transparent)
+        title: link.title,
+        address: link.shortURL + (link.deployedAt.map { " · " + TimeText.short($0) } ?? ""),
+        image: own ?? local.flatMap { SnapshotImages.image(for: $0.id, taken: $0.snapshotAt) },
+        lists: local.map { e in
+          [("Local", [PreviewCard.Line(id: "\(e.port)", port: e.port, name: e.name, trailing: model.isUp(e) ? "Running" : "Stopped")])]
+        } ?? [],
+        transparent: model.transparent)
+        .padding(Metrics.margin)
+    } else if let id = model.preview, let row = model.rows.row(id), let entryID = row.entryID, let e = model.history[entryID] {
+      let hosted = model.hostedLink(for: e)
+      PreviewCard(
+        title: e.title ?? row.name,
+        address: "localhost:\(row.port)\(e.snapshotPath ?? "")",
+        image: SnapshotImages.image(for: entryID, taken: e.snapshotAt),
+        lists: [
+          ("Needed by", model.neededBy(entryID).map(PreviewCard.Line.init(need:))),
+          ("Needs", model.needs(of: entryID).map(PreviewCard.Line.init(need:))),
+          ("Hosted", hosted.map { [PreviewCard.Line(id: $0.url, port: nil, name: $0.title, trailing: $0.deployedAt.map { TimeText.short($0) } ?? "")] } ?? []),
+        ],
+        transparent: model.transparent)
         .padding(Metrics.margin)
     }
   }
 }
 
-/// A snapshot of the page, its title and address, then the servers it needs and the ones that need it.
+/// A snapshot of the page, its title and address, then short lists: what it needs, the server or link behind it.
 struct PreviewCard: View {
-  let row: Row
-  let entry: HistoryEntry
+  struct Line: Identifiable {
+    let id: String
+    let port: UInt16?
+    let name: String
+    let trailing: String
+
+    init(id: String, port: UInt16?, name: String, trailing: String) {
+      self.id = id
+      self.port = port
+      self.name = name
+      self.trailing = trailing
+    }
+
+    init(need n: Model.Need) {
+      self.init(id: "\(n.port)", port: n.port, name: n.name ?? "", trailing: n.running ? "Running" : "Stopped")
+    }
+  }
+
+  let title: String
+  let address: String
   let image: NSImage?
-  let needs: [Model.Need]
-  let neededBy: [Model.Need]
+  let lists: [(String, [Line])]
   let transparent: Bool
 
   var body: some View {
@@ -39,21 +76,22 @@ struct PreviewCard: View {
           .accessibilityHidden(true)
       }
       VStack(alignment: .leading, spacing: 2) {
-        Text(entry.title ?? row.name)
+        Text(title)
           .font(.system(size: 13, weight: .semibold))
           .foregroundStyle(Palette.label)
           .lineLimit(1)
           .truncationMode(.tail)
-        Text(verbatim: "localhost:\(row.port)\(entry.snapshotPath ?? "")")
+        Text(verbatim: address)
           .font(.system(size: 12))
           .monospacedDigit()
           .foregroundStyle(Palette.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
       }
       .padding(.horizontal, Metrics.previewInset)
       .padding(.top, image == nil ? Metrics.previewInset : 8)
       .padding(.bottom, 2)
-      list("Needed by", neededBy)
-      list("Needs", needs)
+      ForEach(lists, id: \.0) { list($0.0, $0.1) }
     }
     .padding(Metrics.padding)
     .frame(width: Metrics.previewWidth, alignment: .leading)
@@ -62,7 +100,7 @@ struct PreviewCard: View {
   }
 
   @ViewBuilder
-  private func list(_ title: String, _ items: [Model.Need]) -> some View {
+  private func list(_ title: String, _ items: [Line]) -> some View {
     if !items.isEmpty {
       Text(title)
         .font(.system(size: 12, weight: .semibold))
@@ -71,18 +109,20 @@ struct PreviewCard: View {
         .frame(height: Metrics.rowHeight, alignment: .center)
       ForEach(items) { n in
         HStack(spacing: 0) {
-          Text(verbatim: "\(n.port)")
-            .monospacedDigit()
-            .foregroundStyle(Palette.secondary)
-            .fixedSize()
-            .frame(minWidth: Metrics.previewPortWidth, alignment: .leading)
-            .padding(.trailing, 4)
-          Text(n.name ?? "")
+          if let port = n.port {
+            Text(verbatim: "\(port)")
+              .monospacedDigit()
+              .foregroundStyle(Palette.secondary)
+              .fixedSize()
+              .frame(minWidth: Metrics.previewPortWidth, alignment: .leading)
+              .padding(.trailing, 4)
+          }
+          Text(n.name)
             .foregroundStyle(Palette.label)
             .lineLimit(1)
             .truncationMode(.middle)
             .frame(maxWidth: .infinity, alignment: .leading)
-          Text(n.running ? "Running" : "Stopped")
+          Text(n.trailing)
             .foregroundStyle(Palette.secondary)
             .padding(.leading, Metrics.trailGap)
         }

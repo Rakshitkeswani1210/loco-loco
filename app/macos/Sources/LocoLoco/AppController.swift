@@ -137,6 +137,9 @@ final class AppController: NSObject, NSWindowDelegate {
       _ = model.appearance
       _ = model.transparent
       _ = model.preview
+      _ = model.tab
+      _ = model.hostedLinks
+      _ = model.groupByProject
       _ = model.history
     } onChange: { [weak self] in
       Task { @MainActor in self?.update(); self?.observe() }
@@ -270,13 +273,22 @@ final class AppController: NSObject, NSWindowDelegate {
   /// Sizes the panel to its rows, under the status item or in the middle of the screen, and scrolls what doesn't fit.
   private func layout() {
     let rows = model.rows
-    var height = Metrics.padding * 2 + Metrics.rowHeight * CGFloat(1 + rows.running.count)
-    if rows.running.isEmpty { height += Metrics.emptyHeight }
-    if let groups = rows.groups {
-      height += Metrics.projectHeader * CGFloat(groups.count) + Metrics.projectGap * CGFloat(groups.count - 1)
-    }
-    if rows.stoppedTotal > 0 {
-      height += Metrics.groupGap + Metrics.rowHeight * CGFloat(1 + rows.stoppedLines + (rows.hasMore ? 1 : 0))
+    // The tabs, then the tab's own rows.
+    var height = Metrics.padding * 2 + Metrics.rowHeight
+    if model.tab == .hosted {
+      let groups = model.hosted
+      let headers = groups.filter { $0.tag != nil }.count
+      height += Metrics.rowHeight * CGFloat(max(1, groups.reduce(0) { $0 + $1.rows.count }))
+      height += Metrics.projectHeader * CGFloat(headers) + Metrics.projectGap * CGFloat(max(0, headers - 1))
+    } else {
+      height += Metrics.rowHeight * CGFloat(1 + rows.running.count)
+      if rows.running.isEmpty { height += Metrics.emptyHeight }
+      if let groups = rows.groups {
+        height += Metrics.projectHeader * CGFloat(groups.count) + Metrics.projectGap * CGFloat(groups.count - 1)
+      }
+      if rows.stoppedTotal > 0 {
+        height += Metrics.groupGap + Metrics.rowHeight * CGFloat(1 + rows.stoppedLines + (rows.hasMore ? 1 : 0))
+      }
     }
     let place: (x: CGFloat, top: CGFloat, maxHeight: CGFloat)
     if let screen = centeredOn {
@@ -343,7 +355,9 @@ final class AppController: NSObject, NSWindowDelegate {
     }
     if id.hasPrefix("line:") { model.toggleProject(String(id.dropFirst(5))); return }
     if id.hasPrefix("more:") { model.fullProjects.insert(String(id.dropFirst(5))); return }
-    if id.hasPrefix("proj:") { return }
+    if id.hasPrefix("proj:") || id.hasPrefix("hproj:") { return }
+    if id.hasPrefix("tab:") { model.setTab(PanelTab(rawValue: String(id.dropFirst(4))) ?? .local); return }
+    if let link = model.link(id), let url = URL(string: link.url) { open(url); return }
     guard let row = model.rows.row(id) else { return }
     switch row.group {
     case .running:
@@ -355,6 +369,11 @@ final class AppController: NSObject, NSWindowDelegate {
   }
 
   private func perform(_ action: RowAction, on id: String) {
+    if action == .copy {
+      if let link = model.link(id) { model.copy([link], mark: id) }
+      else if id.hasPrefix("hproj:") { model.copy(model.linksInProject(String(id.dropFirst(6))), mark: id) }
+      return
+    }
     if id.hasPrefix("proj:"), action == .stop { model.stopProject(String(id.dropFirst(5))); return }
     if id.hasPrefix("line:"), action == .restart { restartProject(String(id.dropFirst(5))); return }
     guard let row = model.rows.row(id) else { return }
@@ -364,6 +383,7 @@ final class AppController: NSObject, NSWindowDelegate {
     case .force: if let e = row.entryID { model.forceStop(e) }
     case .log: showLog(row)
     case .remove: if row.canRemove, let e = row.entryID { model.remove(e) }
+    case .copy: break
     }
   }
 
@@ -382,6 +402,7 @@ final class AppController: NSObject, NSWindowDelegate {
 
   private func showContextMenu(for id: String, at point: CGPoint?) {
     if id.hasPrefix("proj:") || id.hasPrefix("line:") { showProjectMenu(for: id, at: point); return }
+    if let link = model.link(id) { showLinkMenu(link, id: id, at: point); return }
     guard let row = model.rows.row(id) else { return }
     let isDev = row.entryID != nil
     let folder = URL(fileURLWithPath: row.folder)
@@ -409,6 +430,11 @@ final class AppController: NSObject, NSWindowDelegate {
       if let e = row.entryID { self?.model.stop(e) }
     })
     if let e = row.entryID { menu.addItem(needsItem(for: e)) }
+    if let e = row.entryID.flatMap({ model.history[$0] }), let link = model.hostedLink(for: e), let url = URL(string: link.url) {
+      menu.addItem(.separator())
+      menu.addItem(ActionItem("Open hosted link", symbol: "globe") { [weak self] in self?.open(url) })
+      menu.addItem(ActionItem("Copy hosted link", symbol: "doc.on.doc") { [weak self] in self?.model.copy([link]) })
+    }
     menu.addItem(.separator())
     menu.addItem(ActionItem("Show in Finder", symbol: "folder", enabled: folderExists) { [weak self] in
       NSWorkspace.shared.activateFileViewerSelecting([folder])
@@ -452,6 +478,72 @@ final class AppController: NSObject, NSWindowDelegate {
     menu.popUp(positioning: nil, at: at, in: input)
     model.menuRow = nil
     refreshHover()
+  }
+
+  private func showLinkMenu(_ link: HostedLink, id: String, at point: CGPoint?) {
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    if let url = URL(string: link.url) {
+      menu.addItem(ActionItem("Open in browser", symbol: "globe") { [weak self] in self?.open(url) })
+    }
+    menu.addItem(ActionItem("Copy link", symbol: "doc.on.doc") { [weak self] in self?.model.copy([link], mark: id) })
+    menu.addItem(ActionItem("Copy name and link", symbol: "link") { [weak self] in self?.model.copy([link], named: true, mark: id) })
+    menu.addItem(.separator())
+    if let deep = link.fabricLink.flatMap(URL.init(string:)) {
+      menu.addItem(ActionItem("Open in Fabric", symbol: "arrow.up.right.square") { [weak self] in self?.open(deep) })
+    }
+    if let local = model.localEntry(for: link) {
+      if model.isUp(local), let url = URL(string: "http://localhost:\(local.port)") {
+        menu.addItem(ActionItem("Open localhost:\(local.port)", symbol: "arrow.up.right.square") { [weak self] in self?.open(url) })
+      } else {
+        menu.addItem(ActionItem("Start local server", symbol: "arrow.clockwise") { [weak self] in self?.model.startWithNeeds(local.id) })
+      }
+    }
+    let folder = link.folder.flatMap { FileManager.default.fileExists(atPath: $0) ? URL(fileURLWithPath: $0) : nil }
+    menu.addItem(ActionItem("Show in Finder", symbol: "folder", enabled: folder != nil) { [weak self] in
+      if let folder { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+      self?.close()
+    })
+    menu.addItem(.separator())
+    menu.addItem(ActionItem("Rename…", symbol: "pencil") { [weak self] in self?.renameLink(link) })
+    menu.addItem(ActionItem("Hide", symbol: "eye.slash") { [weak self] in self?.model.hideLink(link.url) })
+    popUp(menu, for: id, at: point)
+  }
+
+  private func renameLink(_ link: HostedLink) {
+    let field = NSTextField(string: link.title)
+    field.frame = NSRect(x: 0, y: 0, width: 228, height: 22)
+    if alert("Rename link", info: nil, action: "Rename", destructive: false, field: field) {
+      model.renameLink(link.url, to: field.stringValue)
+    }
+  }
+
+  /// A link on the clipboard is already filled in, and the name comes last, so Return saves it.
+  func addLink() {
+    let url = NSTextField(string: "")
+    url.placeholderString = "https://"
+    if let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+       text.hasPrefix("http"), !text.contains(" ") { url.stringValue = text }
+    let name = NSTextField(string: "")
+    name.placeholderString = "Name"
+    url.frame = NSRect(x: 0, y: 30, width: 228, height: 22)
+    name.frame = NSRect(x: 0, y: 0, width: 228, height: 22)
+    let box = NSView(frame: NSRect(x: 0, y: 0, width: 228, height: 52))
+    box.addSubview(url)
+    box.addSubview(name)
+    url.nextKeyView = name
+    name.nextKeyView = url
+    let a = NSAlert()
+    a.messageText = "Add link"
+    a.addButton(withTitle: "Add")
+    a.addButton(withTitle: "Cancel")
+    a.accessoryView = box
+    a.layout()
+    a.window.initialFirstResponder = url.stringValue.isEmpty ? url : name
+    if runAlert(a) == .alertFirstButtonReturn {
+      model.addLink(url: url.stringValue, name: name.stringValue)
+      model.setTab(.hosted)
+    }
   }
 
   /// Needs ▸ the servers it calls, ticked, then the rest of its project. Ticking by hand wins over what was found.
@@ -529,6 +621,7 @@ final class AppController: NSObject, NSWindowDelegate {
     menu.addItem(ActionItem("Clear history…", enabled: model.history.entries.contains { !$0.isRunning }) { [weak self] in
       self?.confirmClearHistory()
     })
+    menu.addItem(ActionItem("Add link…") { [weak self] in self?.addLink() })
     menu.addItem(.separator())
     menu.addItem(ActionItem("Settings…", key: ",") { [weak self] in self?.openSettings() })
     menu.addItem(.separator())

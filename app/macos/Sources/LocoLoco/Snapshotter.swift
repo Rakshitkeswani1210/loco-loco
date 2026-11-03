@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import WebKit
 
 /// Takes a picture of the page a server opens, in an offscreen web view, for the preview card.
@@ -61,6 +62,35 @@ final class Snapshotter: NSObject {
   }
 }
 
+/// Serves a built site to the web view. Opened as plain files, a Next.js export loses its styles, because it asks for
+/// `/_next/…` from the root.
+@MainActor
+private final class FolderSite: NSObject, WKURLSchemeHandler {
+  static let scheme = "loco-folder"
+  private let root: URL
+
+  init(root: URL) { self.root = root }
+
+  func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+    guard let url = task.request.url else { task.didFailWithError(URLError(.badURL)); return }
+    var file = root.appendingPathComponent(url.path)
+    var isFolder: ObjCBool = false
+    if FileManager.default.fileExists(atPath: file.path, isDirectory: &isFolder), isFolder.boolValue { file.appendPathComponent("index.html") }
+    let inside = file.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path + "/")
+    guard inside, let data = try? Data(contentsOf: file) else {
+      task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+      task.didFinish()
+      return
+    }
+    let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+    task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": type])!)
+    task.didReceive(data)
+    task.didFinish()
+  }
+
+  func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+}
+
 /// One snapshot: finds a page to show, loads it, waits for its requests to settle, saves a 640 × 400 PNG.
 @MainActor
 private final class Capture: NSObject, WKNavigationDelegate {
@@ -112,8 +142,7 @@ private final class Capture: NSObject, WKNavigationDelegate {
       MainActor.assumeIsolated { self?.end(nil) }
     }
     if let folder {
-      let index = URL(fileURLWithPath: folder).appendingPathComponent("index.html")
-      load(index, readAccess: URL(fileURLWithPath: folder, isDirectory: true))
+      load(URL(string: FolderSite.scheme + "://site/index.html")!, site: FolderSite(root: URL(fileURLWithPath: folder, isDirectory: true)))
       return
     }
     Task {
@@ -143,8 +172,9 @@ private final class Capture: NSObject, WKNavigationDelegate {
     return type.contains("json") ? .json : .other
   }
 
-  private func load(_ url: URL, readAccess: URL? = nil) {
+  private func load(_ url: URL, site: FolderSite? = nil) {
     let config = WKWebViewConfiguration()
+    if let site { config.setURLSchemeHandler(site, forURLScheme: FolderSite.scheme) }
     config.websiteDataStore = .nonPersistent()
     config.userContentController.addUserScript(WKUserScript(source: Self.readOnly, injectionTime: .atDocumentStart, forMainFrameOnly: false))
     config.mediaTypesRequiringUserActionForPlayback = .all
@@ -160,7 +190,7 @@ private final class Capture: NSObject, WKNavigationDelegate {
     window.orderBack(nil)
     self.web = web
     self.window = window
-    if let readAccess { web.loadFileURL(url, allowingReadAccessTo: readAccess) } else { web.load(URLRequest(url: url)) }
+    web.load(URLRequest(url: url))
   }
 
   func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {

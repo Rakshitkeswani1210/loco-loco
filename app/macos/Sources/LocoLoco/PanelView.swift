@@ -49,18 +49,23 @@ struct PanelRoot: View {
 
   private func content(_ rows: Rows) -> some View {
     VStack(spacing: 0) {
+      PanelTabs(model: model, running: rows.running.count)
+      if model.tab == .hosted {
+        HostedList(model: model)
+      } else {
+        local(rows)
+      }
+    }
+    .padding(Metrics.padding)
+  }
+
+  @ViewBuilder
+  private func local(_ rows: Rows) -> some View {
+    VStack(spacing: 0) {
       GroupHeader(
         title: rows.running.isEmpty ? "Nothing running" : "Running",
         count: rows.running.isEmpty ? nil : rows.running.count
-      ) {
-        IconButton(symbol: "ellipsis", weight: .medium, hot: model.hot == "menu" || model.moreMenuOpen)
-          .frameID("menu")
-          .padding(.trailing, -5)
-          .accessibilityElement()
-          .accessibilityLabel("Options")
-          .accessibilityAddTraits(.isButton)
-          .accessibilityAction { model.perform(.more) }
-      }
+      ) { EmptyView() }
       if let groups = rows.groups {
         ForEach(groups) { g in
           ProjectHeader(group: g, model: model)
@@ -102,7 +107,166 @@ struct PanelRoot: View {
         }
       }
     }
-    .padding(Metrics.padding)
+  }
+}
+
+/// Local and Hosted, each with its count, and the ··· menu.
+struct PanelTabs: View {
+  let model: Model
+  let running: Int
+
+  var body: some View {
+    HStack(spacing: 14) {
+      tab(.local, "Local", running)
+      tab(.hosted, "Hosted", model.hostedCount)
+      Spacer(minLength: 0)
+      IconButton(symbol: "ellipsis", weight: .medium, hot: model.hot == "menu" || model.moreMenuOpen)
+        .frameID("menu")
+        .padding(.trailing, -5)
+        .accessibilityElement()
+        .accessibilityLabel("Options")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { model.perform(.more) }
+    }
+    .font(.system(size: 12))
+    .padding(.horizontal, Metrics.rowInset)
+    .frame(height: Metrics.rowHeight)
+  }
+
+  private func tab(_ t: PanelTab, _ title: String, _ count: Int) -> some View {
+    let on = model.tab == t
+    return HStack(spacing: 5) {
+      Text(title).fontWeight(on ? .semibold : .regular).foregroundStyle(on ? Palette.label : Palette.secondary)
+      Text(verbatim: "\(count)").monospacedDigit().foregroundStyle(Palette.secondary)
+    }
+    .frame(height: Metrics.rowHeight)
+    .frameID("row:tab:" + t.rawValue)
+    .accessibilityElement(children: .combine)
+    .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+    .accessibilityAction { model.perform(.primary("tab:" + t.rawValue)) }
+  }
+}
+
+/// The Hosted tab: links under their project labels, newest deploy first.
+struct HostedList: View {
+  let model: Model
+
+  var body: some View {
+    let groups = model.hosted
+    VStack(spacing: 0) {
+      if groups.isEmpty {
+        GroupHeader(title: "No hosted links yet", count: nil) { EmptyView() }
+      }
+      ForEach(groups) { g in
+        if let tag = g.tag {
+          HostedHeader(group: g, tag: tag, model: model)
+            .padding(.top, g.id == groups.first?.id ? 0 : Metrics.projectGap)
+        }
+        ForEach(g.rows) { HostedRowView(row: $0, model: model, showProject: g.tag == nil) }
+      }
+    }
+  }
+}
+
+/// A project's label in Hosted. On hover, Copy takes all its links.
+struct HostedHeader: View {
+  let group: HostedGroup
+  let tag: ProjectTag
+  let model: Model
+
+  var body: some View {
+    let id = group.headerID
+    let highlighted = id != nil && model.highlight == id
+    HStack(spacing: 0) {
+      ProjectLabel(tag: tag, capped: false)
+      Spacer(minLength: 0)
+      if highlighted, let id {
+        HostedCopyButton(id: id, model: model)
+      }
+    }
+    .padding(.horizontal, Metrics.rowInset)
+    .frame(height: Metrics.projectHeader)
+    .background {
+      if highlighted { RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover) }
+    }
+    .modifier(FrameIDIf(id: id.map { "row:" + $0 }))
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(tag.name)
+    .accessibilityAddTraits(.isHeader)
+    .accessibilityActions {
+      if let id { Button("Copy all links in \(tag.name)") { model.perform(.action(id, .copy)) } }
+    }
+  }
+}
+
+/// Copy, which turns into a green check for a moment.
+struct HostedCopyButton: View {
+  let id: String
+  let model: Model
+
+  var body: some View {
+    let button = "btn:\(id):copy"
+    Group {
+      if model.copied == id {
+        Image(systemName: "checkmark")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(Palette.tags[1].ink)
+          .frame(width: Metrics.actionWidth, height: Metrics.buttonHeight)
+      } else {
+        IconButton(symbol: RowAction.copy.symbol, size: RowAction.copy.symbolSize, width: Metrics.actionWidth, hot: model.hot == button)
+      }
+    }
+    .frameID(button)
+    .padding(.trailing, -5)
+  }
+}
+
+/// A hosted link: its name and last deploy. Click opens it; on hover, Copy takes the date's place.
+struct HostedRowView: View {
+  let row: HostedRow
+  let model: Model
+  var showProject = false
+
+  var body: some View {
+    let highlighted = model.highlight == row.id
+    HStack(spacing: 0) {
+      Text(row.link.title)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .foregroundStyle(Palette.label)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      if showProject, let tag = row.tag {
+        ProjectLabel(tag: tag)
+          .padding(.leading, Metrics.tagGap)
+          .layoutPriority(1)
+      }
+      ZStack(alignment: .trailing) {
+        Color.clear.frame(width: Metrics.trailWidth, height: 0)
+        if (highlighted && model.menuRow != row.id) || model.copied == row.id {
+          HostedCopyButton(id: row.id, model: model)
+        } else if let date = row.link.deployedAt {
+          Text(TimeText.short(date)).monospacedDigit().foregroundStyle(Palette.secondary).frame(height: Metrics.buttonHeight)
+        }
+      }
+      .fixedSize()
+      .padding(.leading, Metrics.trailGap)
+    }
+    .font(.system(size: 13))
+    .padding(.horizontal, Metrics.rowInset)
+    .frame(height: Metrics.rowHeight)
+    .background {
+      if highlighted { RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover) }
+    }
+    .frameID("row:" + row.id)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(row.link.title)
+    .accessibilityValue(row.link.deployedAt.map { "deployed \(TimeText.short($0))" } ?? "")
+    .accessibilityAddTraits(.isLink)
+    .accessibilityAction { model.perform(.primary(row.id)) }
+    .accessibilityActions {
+      Button(RowAction.copy.title) { model.perform(.action(row.id, .copy)) }
+      Button("Show menu") { model.perform(.menu(row.id, nil)) }
+    }
   }
 }
 

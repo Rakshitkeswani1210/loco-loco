@@ -76,7 +76,7 @@ final class InputView: NSView, NSViewToolTipOwner {
   }
 
   override func rightMouseDown(with e: NSEvent) {
-    guard !model.staleUnderPointer, let id = model.target(at: local(e)).row, id != Rows.more, !id.hasPrefix("more:") else { return }
+    guard !model.staleUnderPointer, let id = model.target(at: local(e)).row, id != Rows.more, !id.hasPrefix("more:"), !id.hasPrefix("tab:") else { return }
     model.perform(.menu(id, local(e)))
   }
 
@@ -105,6 +105,7 @@ final class InputView: NSView, NSViewToolTipOwner {
     case 126: model.moveHighlight(-1)
     case 36, 76: if let h = model.highlight { model.perform(.primary(h)) }
     case 49: model.togglePreview()
+    case 48: model.setTab(model.tab == .local ? .hosted : .local)
     // Right opens a project's line in Stopped, Left closes it.
     case 123, 124:
       if let line = model.rows.line(model.highlight), line.open != (e.keyCode == 124) { model.toggleProject(line.root) }
@@ -121,6 +122,7 @@ final class InputView: NSView, NSViewToolTipOwner {
     case (51, _), (117, _):
       if let h { model.perform(.action(h, model.rows.row(h)?.group == .stopped ? .remove : .stop)) }
     case (_, "r"): if let h { model.perform(.action(h, .restart)) }
+    case (_, "c"): if let h, model.link(h) != nil { model.perform(.action(h, .copy)) }
     case (_, ","): model.perform(.settings)
     case (_, "q"): NSApp.terminate(nil)
     case (_, "w"): model.perform(.close)
