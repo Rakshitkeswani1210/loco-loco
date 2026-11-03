@@ -293,6 +293,8 @@ final class Model {
 
   @ObservationIgnored private var timer: Timer?
   @ObservationIgnored private var previewTimer: Timer?
+  /// Old jobs were dropped from history on launch, so it needs saving.
+  @ObservationIgnored private var clearedTasks = false
   @ObservationIgnored let snapshotter = Snapshotter()
   /// When each running server was first linked: process start on the first scan, else when it came up. Snapshots follow it.
   @ObservationIgnored private var cameUp: [UUID: Date] = [:]
@@ -340,6 +342,7 @@ final class Model {
     showPreviews = d.bool(forKey: "showPreviews")
     history = History(entries: [], limit: d.integer(forKey: "historyLimit"))
     history = History(entries: History.load(from: historyURL), limit: historyLimit)
+    clearedTasks = history.removeTasks() > 0
   }
 
   // MARK: Rows
@@ -740,6 +743,7 @@ final class Model {
   // MARK: Scanning
 
   func begin() {
+    if clearedTasks { save() }
     Snapshotter.clean(keeping: Set(history.entries.map(\.id)))
     scanNow()
   }
@@ -750,8 +754,10 @@ final class Model {
     guard !scanning else { rescan = true; return }
     scanning = true
     let home = self.home
+    // What Loco Loco started or already lists stays a server, even young on a random port.
+    let known = Set(spawned.keys).union(history.entries.filter(\.isRunning).flatMap { ($0.procs ?? []).map(\.pid) })
     Task.detached(priority: .userInitiated) { [weak self] in
-      let found = Scanner.scan(home: home)
+      let found = Scanner.scan(home: home, known: known)
       await self?.finish(found)
     }
   }

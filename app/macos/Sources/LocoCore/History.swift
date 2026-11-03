@@ -105,6 +105,18 @@ public struct History: Sendable {
     return true
   }
 
+  /// Forgets stopped entries that were jobs, not servers (see `Naming.isTask`). Saved before the scanner told them apart.
+  /// - Returns: how many went.
+  @discardableResult
+  public mutating func removeTasks() -> Int {
+    let before = entries.count
+    entries.removeAll { e in
+      guard let stopped = e.stoppedAt else { return false }
+      return Naming.isTask(command: e.command, ports: e.ports, age: stopped.timeIntervalSince(e.startedAt))
+    }
+    return before - entries.count
+  }
+
   /// Links each scanned dev server to an entry and records the ones that stopped.
   ///
   /// A server matches an entry by its root process (pid and start time), then by a pid Loco Loco

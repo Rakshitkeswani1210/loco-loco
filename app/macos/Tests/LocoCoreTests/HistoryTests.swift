@@ -164,4 +164,20 @@ private func server(
     #expect(h.entries.count == 1)
     #expect(h.entries[0].needs == nil)
   }
+
+  @Test func oldJobsLeaveHistoryAndServersStay() {
+    func stopped(_ root: Int32, port: UInt16, command: String, ranFor: TimeInterval) -> HistoryEntry {
+      var e = HistoryEntry(server: server(root: root, port: port, command: command), now: t0)
+      e.stoppedAt = e.startedAt + ranFor
+      return e
+    }
+    let test = stopped(100, port: 3000, command: "npm test", ranFor: 3000)
+    let script = stopped(101, port: 62625, command: "python3 scripts/check-site.py", ranFor: 140)
+    let longRandom = stopped(102, port: 55555, command: "python3 scripts/preview.py", ranFor: 3600)
+    let quickFixed = stopped(103, port: 3617, command: "python3 -m http.server 3617", ranFor: 54)
+    let running = HistoryEntry(server: server(root: 104, port: 62626, command: "python3 scripts/x.py"), now: t0)
+    var h = History(entries: [test, script, longRandom, quickFixed, running])
+    #expect(h.removeTasks() == 2)
+    #expect(Set(h.entries.map(\.port)) == [55555, 3617, 62626])
+  }
 }

@@ -47,7 +47,7 @@ To update, quit Loco Loco and unzip the new version over the old folder.
 - Settings has Launch at login, the menu bar count, which servers to show, Group by project (puts running servers under a header for each project), Appearance (System, Light or Dark), Transparent background (Liquid Glass), the keyboard shortcut and how much history to keep.
 - On Windows, the ··· menu has Stop all, Start with Windows and the other settings, and right-clicking the octopus gives Open Loco Loco, Stop all… and Quit Loco Loco.
 
-Loco Loco lists processes that listen on a port and run from a folder inside your home folder, so apps like Figma stay hidden. It can only see and stop your own processes.
+Loco Loco lists processes that listen on a port and run from a folder inside your home folder, so apps like Figma stay hidden. On the Mac, jobs that open a port for a moment stay hidden too: test runs, builds, and anything on a random high port for its first 10 minutes. It can only see and stop your own processes.
 
 ## Your data
 

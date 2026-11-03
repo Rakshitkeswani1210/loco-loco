@@ -33,7 +33,8 @@ public struct Server: Sendable, Identifiable, Hashable {
 
 public enum Scanner {
   /// Reads the process table once. Takes about 10–30 ms with 600 processes.
-  public static func scan(home: String = NSHomeDirectory()) -> [Server] {
+  /// - Parameter known: pids Loco Loco started or already lists, which are servers whatever they look like.
+  public static func scan(home: String = NSHomeDirectory(), known: Set<pid_t> = []) -> [Server] {
     let me = getuid(), myPID = getpid()
     var table: [pid_t: ProcInfo] = [:]
     var children: [pid_t: [pid_t]] = [:]
@@ -153,13 +154,17 @@ public enum Scanner {
         queue.append(contentsOf: children[p] ?? [])
       }
 
+      // Tests and scripts that open a port for a moment show only with app and macOS servers, and leave no history.
+      let age = Date().timeIntervalSince(table[g.listener]?.startDate ?? rootInfo.startDate)
+      let isTask = isDev && !procs.contains { known.contains($0.pid) } && Naming.isTask(command: command, ports: Array(g.ports), age: age)
+
       servers.append(Server(
         root: ProcRef(pid: root, startMicros: rootInfo.startMicros),
         startedAt: rootInfo.startDate,
         ports: g.ports.sorted(),
         name: name, projectDir: projectDir,
         command: command, commandDir: commandDir, path: path,
-        isDevServer: isDev, processes: procs, executable: listenerExe.isEmpty ? nil : listenerExe,
+        isDevServer: isDev && !isTask, processes: procs, executable: listenerExe.isEmpty ? nil : listenerExe,
         envNeeds: isDev ? Needs.ports(env: rootArgs.env.merging(args(g.listener).env) { a, _ in a }, own: g.ports) : []))
     }
     return servers.sorted { ($0.port, $0.root.pid) < ($1.port, $1.root.pid) }

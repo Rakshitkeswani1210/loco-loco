@@ -26,6 +26,43 @@ import Testing
   }
 }
 
+@Suite struct TaskTests {
+  @Test func testsAndBuildsAreTasks() {
+    for c in [
+      "npm test", #"cd "/Users/me/Acme /kit" && npm test 2>&1 | tail -25"#, "npm run test:widgets", "pnpm build", "yarn lint",
+      "npm run gen >/dev/null 2>&1 && npm run build:static > /tmp/b.log 2>&1", "npx vitest run", "npx playwright test", "pnpm exec next build",
+      "CI=1 npx jest", "pytest tests", "npm run typecheck 2>&1 | tail -5", "kill 6556; sleep 2; cd x && npm run build",
+    ] {
+      #expect(Naming.isTaskCommand(c), "\(c)")
+    }
+  }
+
+  @Test func serversAreNotTasks() {
+    for c in [
+      "npm run dev", "npm start", "pnpm dev", "npm run build && npm start", "cd x && npx next dev -p 3470", "next start -p 3000", "vite",
+      "vite preview --port 4193", "python3 -m http.server 3601", "NEXT_PUBLIC_API=http://127.0.0.1:8002 pnpm exec next dev -p 3102",
+      "bash ~/.cache/api-8002.sh > log 2>&1", "npm run test-server-mock-free && npm run dev", "python3 cap.py shots",
+    ] {
+      #expect(!Naming.isTaskCommand(c), "\(c)")
+    }
+  }
+
+  @Test func aYoungServerOnARandomPortIsATask() {
+    #expect(Naming.isTask(command: "python3 scripts/check-site.py", ports: [62625], age: 140))
+    #expect(Naming.isTask(command: "python3 -m http.server 0", ports: [49152], age: 0))
+  }
+
+  @Test func itBecomesAServerOnceItLasts() {
+    #expect(!Naming.isTask(command: "python3 scripts/preview.py", ports: [62625], age: Naming.taskSeconds))
+  }
+
+  @Test func aFixedPortIsAServerHoweverYoung() {
+    #expect(!Naming.isTask(command: "python3 -m http.server 3617 -d out", ports: [3617], age: 54))
+    #expect(!Naming.isTask(command: "python3 -m http.server 49151", ports: [49151], age: 1))
+    #expect(!Naming.isTask(command: "node server.js", ports: [3000, 62000], age: 1))
+  }
+}
+
 @Suite struct ProjectTests {
   let home = "/Users/me"
 

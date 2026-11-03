@@ -290,6 +290,49 @@ public enum Naming {
     return nil
   }
 
+  /// Ports the system hands out when a program asks for any free one.
+  static let randomPorts: ClosedRange<UInt16> = 49152...65535
+  /// How long something on a random port has to last before it counts as a server. Long enough for a test suite.
+  public static let taskSeconds: TimeInterval = 600
+  static let packageManagers: Set<String> = ["npm", "pnpm", "yarn", "bun"]
+  static let taskScripts: Set<String> = ["test", "build", "lint", "typecheck", "check", "gen"]
+  static let taskTools: Set<String> = ["vitest", "jest", "pytest", "tsc", "eslint"]
+
+  /// A job that opens a port on the way, not a server: a test run, a build, or anything young on a random port,
+  /// like a script that serves a site to a browser it's driving. Hidden until it outlasts `taskSeconds`.
+  public static func isTask(command: String, ports: [UInt16], age: TimeInterval) -> Bool {
+    if isTaskCommand(command) { return true }
+    guard let lowest = ports.min() else { return false }
+    return randomPorts.contains(lowest) && age < taskSeconds
+  }
+
+  /// True when the command's last step is a test, build, lint or the like. In `npm run build && npm start` the last
+  /// step is the server, so it isn't one. `npm test | tail` counts as npm test.
+  public static func isTaskCommand(_ command: String) -> Bool {
+    var last: [String] = []
+    var step: [String] = []
+    for w in shellWords(command) + [";"] {
+      if ["&&", "||", ";", "&"].contains(w) {
+        if !step.isEmpty { last = step }
+        step = []
+      } else {
+        step.append(w)
+      }
+    }
+    if let pipe = last.firstIndex(of: "|") { last = Array(last[..<pipe]) }
+    // Past `NAME=value` prefixes, and npx, which only runs what follows.
+    var words = last.drop { $0.range(of: #"^[A-Za-z_][A-Za-z0-9_]*="#, options: .regularExpression) != nil }
+    if let first = words.first, ["npx", "pnpx", "bunx"].contains(baseName(first)) { words = words.dropFirst() }
+    if words.first.map(baseName) == "pnpm", words.dropFirst().first == "exec" { words = words.dropFirst(2) }
+    let args = Array(words)
+    guard let tool = args.first.map(baseName) else { return false }
+    if taskTools.contains(tool) { return true }
+    if tool == "playwright" { return args.dropFirst().first == "test" }
+    if tool == "next" || tool == "vite" { return args.dropFirst().first == "build" }
+    guard packageManagers.contains(tool), let script = args.dropFirst().first(where: { !$0.hasPrefix("-") && $0 != "run" && $0 != "run-script" }) else { return false }
+    return taskScripts.contains(String(script.prefix { $0 != ":" }))
+  }
+
   public static func defaultIsFolder(_ path: String) -> Bool {
     var dir: ObjCBool = false
     return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue

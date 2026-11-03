@@ -147,6 +147,7 @@ final class TestHooks: NSObject {
       switch a[1] {
       case "appearance": model.setAppearance(Appearance(rawValue: a[2]) ?? .system)
       case "transparent": model.setTransparent(a[2] == "on")
+      case "showAll": model.setShowAll(a[2] == "on")
       default: break
       }
     case "move" where a.count == 3: move(to: CGPoint(x: Double(a[1]) ?? 0, y: Double(a[2]) ?? 0))
