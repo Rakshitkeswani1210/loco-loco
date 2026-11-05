@@ -70,12 +70,12 @@ extension Server {
 
 public struct History: Sendable {
   public private(set) var entries: [HistoryEntry]
-  /// How many stopped servers to keep. Running ones are always kept.
-  public var limit: Int
+  /// How many days a stopped server is kept, from when it stopped. Running ones are always kept.
+  public var days: Int
 
-  public init(entries: [HistoryEntry] = [], limit: Int = 20) {
+  public init(entries: [HistoryEntry] = [], days: Int = 30) {
     self.entries = entries
-    self.limit = limit
+    self.days = days
   }
 
   public subscript(id: UUID) -> HistoryEntry? {
@@ -191,26 +191,27 @@ public struct History: Sendable {
       entries[i].stoppedAt = firstScan ? entries[i].lastSeenAt : now
       changed = true
     }
-    if prune(keeping: keeping) { changed = true }
+    if prune(keeping: keeping, now: now) { changed = true }
     return (links, changed)
   }
 
-  /// The newest `limit` stopped entries, one per folder and command and one per project and port, and the ones they need.
+  /// Stopped entries from the last `days` days, one per folder and command and one per project and port, and the ones they need.
   /// A stopped entry for a server that's running again goes. `keep` is never removed.
   @discardableResult
-  public mutating func prune(keeping keep: Set<UUID> = []) -> Bool {
+  public mutating func prune(keeping keep: Set<UUID> = [], now: Date = Date()) -> Bool {
+    let cutoff = now - Double(days) * 86400
     var kept = Set<UUID>()
     var claimed = Set<String>()
     for e in entries where e.isRunning {
       claimed.insert(e.key)
       claimed.insert(e.identity)
     }
-    for e in stopped where keep.contains(e.id) || (!claimed.contains(e.key) && !claimed.contains(e.identity) && kept.count < limit) {
+    for e in stopped where keep.contains(e.id) || (!claimed.contains(e.key) && !claimed.contains(e.identity) && e.stoppedAt! >= cutoff) {
       claimed.insert(e.key)
       claimed.insert(e.identity)
       kept.insert(e.id)
     }
-    // A server that a kept one needs stays too, past the limit, so Restart can still bring it up.
+    // A server that a kept one needs stays too, however old, so Restart can still bring it up.
     var covered = Set(entries.filter { $0.isRunning || kept.contains($0.id) }.flatMap(\.ports))
     var needed = Set(entries.filter { $0.isRunning || kept.contains($0.id) }.flatMap(\.neededPorts))
     while let e = stopped.first(where: {

@@ -28,14 +28,24 @@ struct PanelRoot: View {
     let rows = model.rows
     let shape = RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous)
     Group {
-      if model.scrolls {
-        ScrollView(.vertical) { content(rows) }
-          .scrollIndicators(.automatic)
-          .clipShape(shape)
-          .frameID("clip")
-      } else {
-        content(rows)
+      // The header stays outside the scroll view, so it stays put and the search field keeps the keyboard when the list grows.
+      VStack(spacing: 0) {
+        PanelTabs(model: model, running: rows.running.count)
+          .padding([.horizontal, .top], Metrics.padding)
+        if model.scrolls {
+          ScrollViewReader { proxy in
+            ScrollView(.vertical) { list(rows) }
+              .scrollIndicators(.automatic)
+              .frameID("clip")
+              .onChange(of: model.highlight) { _, h in
+                if model.keyboardDriven, let h { proxy.scrollTo(h) }
+              }
+          }
+        } else {
+          list(rows)
+        }
       }
+      .clipShape(shape)
     }
     .frame(width: Metrics.width)
     .frame(maxHeight: .infinity, alignment: .top)
@@ -47,16 +57,17 @@ struct PanelRoot: View {
     }
   }
 
-  private func content(_ rows: Rows) -> some View {
+  private func list(_ rows: Rows) -> some View {
     VStack(spacing: 0) {
-      PanelTabs(model: model, running: rows.running.count)
-      if model.tab == .hosted {
+      if rows.isSearch {
+        SearchResults(rows: rows, model: model)
+      } else if model.tab == .hosted {
         HostedList(model: model)
       } else {
         local(rows)
       }
     }
-    .padding(Metrics.padding)
+    .padding([.horizontal, .bottom], Metrics.padding)
   }
 
   @ViewBuilder
@@ -98,6 +109,7 @@ struct PanelRoot: View {
                 model.perform(.primary(line.moreID))
               }
             }
+            if line.open, item.id != rows.stoppedItems.last?.id { Color.clear.frame(height: Metrics.lineGap) }
           }
         }
         if rows.hasMore {
@@ -116,21 +128,44 @@ struct PanelTabs: View {
   let running: Int
 
   var body: some View {
-    HStack(spacing: 14) {
-      tab(.local, "Local", running)
-      tab(.hosted, "Hosted", model.hostedCount)
-      Spacer(minLength: 0)
+    HStack(spacing: 0) {
+      if model.searching {
+        Image(systemName: "magnifyingglass")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(Palette.secondary)
+          .padding(.leading, Metrics.rowInset)
+          .padding(.trailing, 7)
+          .accessibilityHidden(true)
+        SearchField(model: model).frameID("searchField")
+        button("xmark", id: "searchClose", label: "Close search") { model.endSearch() }
+      } else {
+        HStack(spacing: 2) {
+          tab(.local, "Local", running)
+          tab(.hosted, "Hosted", model.hostedCount)
+        }
+        .padding(.leading, Metrics.rowInset - Metrics.tabPadding)
+        Spacer(minLength: 0)
+        button("magnifyingglass", id: "search", label: "Search") { model.startSearch() }
+      }
       IconButton(symbol: "ellipsis", weight: .medium, hot: model.hot == "menu" || model.moreMenuOpen)
         .frameID("menu")
-        .padding(.trailing, -5)
         .accessibilityElement()
         .accessibilityLabel("Options")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { model.perform(.more) }
     }
     .font(.system(size: 12))
-    .padding(.horizontal, Metrics.rowInset)
+    .padding(.trailing, Metrics.rowInset - 5)
     .frame(height: Metrics.rowHeight)
+  }
+
+  private func button(_ symbol: String, id: String, label: String, action: @escaping () -> Void) -> some View {
+    IconButton(symbol: symbol, weight: .medium, hot: model.hot == id)
+      .frameID(id)
+      .accessibilityElement()
+      .accessibilityLabel(label)
+      .accessibilityAddTraits(.isButton)
+      .accessibilityAction { action() }
   }
 
   private func tab(_ t: PanelTab, _ title: String, _ count: Int) -> some View {
@@ -139,11 +174,102 @@ struct PanelTabs: View {
       Text(title).fontWeight(on ? .semibold : .regular).foregroundStyle(on ? Palette.label : Palette.secondary)
       Text(verbatim: "\(count)").monospacedDigit().foregroundStyle(Palette.secondary)
     }
-    .frame(height: Metrics.rowHeight)
+    .padding(.horizontal, Metrics.tabPadding)
+    .frame(height: Metrics.tabHeight)
+    .background {
+      if on { RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover) }
+    }
     .frameID("row:tab:" + t.rawValue)
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
     .accessibilityAction { model.perform(.primary("tab:" + t.rawValue)) }
+  }
+}
+
+/// The search field, in place of the tabs. A real text field, for the caret, paste and input methods.
+/// Up, Down, Return and Esc go to the panel, so they work as they do in the list.
+struct SearchField: NSViewRepresentable {
+  let model: Model
+
+  func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+
+  func makeNSView(context: Context) -> NSTextField {
+    let field = NSTextField(string: model.query)
+    field.isBordered = false
+    field.drawsBackground = false
+    field.focusRingType = .none
+    field.font = .systemFont(ofSize: 13)
+    field.lineBreakMode = .byClipping
+    field.cell?.isScrollable = true
+    field.cell?.usesSingleLineMode = true
+    field.placeholderString = "Search"
+    field.setAccessibilityLabel("Search servers and links")
+    field.delegate = context.coordinator
+    model.searchField = field
+    DispatchQueue.main.async {
+      field.window?.makeFirstResponder(field)
+      field.currentEditor()?.moveToEndOfDocument(nil)
+    }
+    return field
+  }
+
+  func updateNSView(_ field: NSTextField, context: Context) {
+    if field.stringValue != model.query { field.stringValue = model.query }
+  }
+
+  @MainActor
+  final class Coordinator: NSObject, NSTextFieldDelegate {
+    let model: Model
+    init(model: Model) { self.model = model }
+
+    func controlTextDidChange(_ note: Notification) {
+      if let field = note.object as? NSTextField { model.setQuery(field.stringValue) }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+      switch command {
+      case #selector(NSResponder.moveUp(_:)): model.moveHighlight(-1)
+      case #selector(NSResponder.moveDown(_:)): model.moveHighlight(1)
+      case #selector(NSResponder.insertNewline(_:)): if let h = model.highlight { model.perform(.primary(h)) }
+      case #selector(NSResponder.cancelOperation(_:)): model.endSearch()
+      case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)): break
+      default: return false
+      }
+      return true
+    }
+  }
+}
+
+/// What matches the search: plain rows under the usual headers, with no project lines. A group with nothing is left out.
+struct SearchResults: View {
+  let rows: Rows
+  let model: Model
+
+  var body: some View {
+    let nothing = rows.running.isEmpty && rows.stopped.isEmpty && rows.hostedMatches.isEmpty
+    VStack(spacing: 0) {
+      if !rows.running.isEmpty {
+        GroupHeader(title: "Running", count: rows.running.count) { EmptyView() }
+        ForEach(rows.running) { RowView(row: $0, model: model) }
+      }
+      if !rows.stopped.isEmpty {
+        GroupHeader(title: "Stopped", count: rows.stopped.count) { EmptyView() }
+          .padding(.top, rows.running.isEmpty ? 0 : Metrics.groupGap)
+        ForEach(rows.stopped) { RowView(row: $0, model: model) }
+      }
+      if !rows.hostedMatches.isEmpty {
+        GroupHeader(title: "Hosted", count: rows.hostedMatches.count) { EmptyView() }
+          .padding(.top, rows.running.isEmpty && rows.stopped.isEmpty ? 0 : Metrics.groupGap)
+        ForEach(rows.hostedMatches) { HostedRowView(row: $0, model: model, showProject: true) }
+      }
+      if nothing {
+        Text("No servers or links match")
+          .font(.system(size: 13))
+          .foregroundStyle(Palette.secondary)
+          .frame(maxWidth: .infinity)
+          .frame(height: Metrics.emptyHeight)
+      }
+    }
   }
 }
 
@@ -258,6 +384,7 @@ struct HostedRowView: View {
       if highlighted { RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover) }
     }
     .frameID("row:" + row.id)
+    .id(row.id)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(row.link.title)
     .accessibilityValue(row.link.deployedAt.map { "deployed \(TimeText.short($0))" } ?? "")
@@ -411,10 +538,6 @@ struct ProjectLineView: View {
       HStack(spacing: 6) {
         ProjectLabel(tag: line.tag, capped: false)
         Text(verbatim: "\(line.count)").monospacedDigit().font(.system(size: 12)).foregroundStyle(Palette.secondary)
-        Image(systemName: "chevron.right")
-          .font(.system(size: 9, weight: .semibold))
-          .foregroundStyle(Palette.secondary)
-          .rotationEffect(.degrees(line.open ? 90 : 0))
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       ZStack(alignment: .trailing) {
@@ -435,6 +558,15 @@ struct ProjectLineView: View {
     .font(.system(size: 13))
     .padding(.horizontal, Metrics.rowInset)
     .frame(height: Metrics.rowHeight)
+    // In the row's inset, so every chevron lines up and the labels stay level with Running's.
+    .overlay(alignment: .leading) {
+      Image(systemName: "chevron.right")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundStyle(Palette.secondary)
+        .rotationEffect(.degrees(line.open ? 90 : 0))
+        .frame(width: Metrics.rowInset)
+        .accessibilityHidden(true)
+    }
     .background {
       if highlighted { RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous).fill(Palette.hover) }
     }
@@ -463,9 +595,9 @@ struct RowView: View {
         .monospacedDigit()
         .foregroundStyle(Palette.secondary)
         .frame(width: Metrics.portWidth, alignment: .leading)
-      Text(row.name)
+      Text(row.matchedTitle ?? row.name)
         .lineLimit(1)
-        .truncationMode(.middle)
+        .truncationMode(row.matchedTitle == nil ? .middle : .tail)
         .foregroundStyle(row.state == .idle ? Palette.label : Palette.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
       if showProject, let project = row.project {
@@ -490,6 +622,7 @@ struct RowView: View {
       }
     }
     .frameID("row:" + row.id)
+    .id(row.id)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(row.accessibilityLabel)
     .accessibilityValue(model.accessibilityDetail(row))
@@ -546,7 +679,7 @@ struct MoreRow: View {
       Image(systemName: "ellipsis")
         .font(.system(size: 13, weight: .medium))
         .frame(width: Metrics.portWidth, alignment: .leading)
-      Text("More").frame(maxWidth: .infinity, alignment: .leading)
+      Text(verbatim: "\(hidden) more").monospacedDigit().frame(maxWidth: .infinity, alignment: .leading)
     }
     .font(.system(size: 13))
     .foregroundStyle(Palette.secondary)

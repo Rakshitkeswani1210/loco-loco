@@ -500,6 +500,8 @@ final class TestHooks: NSObject {
       "groups": (rows.groups ?? []).map { ["name": $0.tag.name, "tint": $0.tag.tint ?? -1, "ports": $0.rows.map { Int($0.port) }] },
       "highlight": model.highlight ?? "", "hot": model.hot ?? "", "stale": model.staleUnderPointer,
       "expanded": model.expanded, "scrolls": model.scrolls,
+      "searching": model.searching, "query": model.query, "fieldFocused": panel.firstResponder is NSTextView,
+      "panelHeight": panel.frame.height,
       "tab": model.tab.rawValue, "copied": model.copied ?? "",
       "hosted": model.hosted.map { g in ["project": g.tag?.name ?? "", "links": g.rows.map { $0.link.title }] as [String: Any] },
       "clipboard": NSPasteboard.general.string(forType: .string) ?? "",

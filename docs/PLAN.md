@@ -9,7 +9,7 @@ Flow images: `docs/flow/iteration-2/flow.png` (the board) and `docs/flow/iterati
 - Name: Loco Loco.
 - The count shows next to the icon. "Show count in menu bar" in Settings turns it off.
 - Stop all… stays, with one confirmation: "Stop all 2 servers?", or "Stop 1 server?" for one.
-- History keeps 20 servers. "Keep history" offers 10, 20 or 50.
+- History keeps 30 days of stopped servers on the Mac. "Keep history" offers 7, 30 or 90 days. (It was 20 servers, with 10, 20 or 50 on offer, until a count ran out in under 3 days.)
 - The context menu has both Open in Terminal and Open in Cursor.
 - Iteration 2 is built as drawn: the history group is called Stopped, and the panel is solid, with glass only on the menus. The UI can be tweaked later.
 - Later, on Oct 13: the settings moved from the ··· menu to a Settings window, which adds Appearance (System, Light or Dark) and a Transparent background switch that puts the panel on Liquid Glass.

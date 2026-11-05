@@ -116,6 +116,10 @@ final class AppController: NSObject, NSWindowDelegate {
 
     model.perform = { [weak self] in self?.handle($0) }
     model.onFrames = { [weak self] in self?.input.updateToolTips() }
+    model.restoreKeys = { [weak self] in
+      guard let self else { return }
+      self.panel.makeFirstResponder(self.input)
+    }
     hotKey.onPress = { [weak self] in self?.toggleCentered() }
     hotKey.register(model.shortcut)
     NSWorkspace.shared.notificationCenter.addObserver(
@@ -275,7 +279,12 @@ final class AppController: NSObject, NSWindowDelegate {
     let rows = model.rows
     // The tabs, then the tab's own rows.
     var height = Metrics.padding * 2 + Metrics.rowHeight
-    if model.tab == .hosted {
+    if rows.isSearch {
+      let groups = [rows.running.count, rows.stoppedTotal, rows.hostedMatches.count].filter { $0 > 0 }
+      height += Metrics.rowHeight * CGFloat(groups.count + groups.reduce(0, +))
+      height += Metrics.groupGap * CGFloat(max(0, groups.count - 1))
+      if groups.isEmpty { height += Metrics.emptyHeight }
+    } else if model.tab == .hosted {
       let groups = model.hosted
       let headers = groups.filter { $0.tag != nil }.count
       height += Metrics.rowHeight * CGFloat(max(1, groups.reduce(0) { $0 + $1.rows.count }))
@@ -288,6 +297,7 @@ final class AppController: NSObject, NSWindowDelegate {
       }
       if rows.stoppedTotal > 0 {
         height += Metrics.groupGap + Metrics.rowHeight * CGFloat(1 + rows.stoppedLines + (rows.hasMore ? 1 : 0))
+        height += Metrics.lineGap * CGFloat(rows.lineGaps)
       }
     }
     let place: (x: CGFloat, top: CGFloat, maxHeight: CGFloat)

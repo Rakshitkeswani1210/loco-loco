@@ -60,7 +60,7 @@ private func server(
     var d = HistoryEntry(server: server(root: 53, port: 4193, command: "d", project: "/Users/me/q"), now: t0)
     d.stoppedAt = t0 + 2
     var h = History(entries: [a, b, c, d])
-    let removed = h.prune()
+    let removed = h.prune(now: t0 + 100)
     #expect(removed)
     #expect(Set(h.entries.map(\.id)) == [a.id, d.id])
   }
@@ -93,16 +93,45 @@ private func server(
     #expect(h.entries.count == 2)
   }
 
-  @Test func pruneKeepsTheNewestUpToTheLimit() {
+  @Test func pruneKeepsWhatStoppedInTheLastDays() {
     var entries: [HistoryEntry] = []
-    for i in 0..<5 {
+    for (i, age) in [1.0, 29.0, 30.0, 31.0, 90.0].enumerated() {
       var e = HistoryEntry(server: server(root: 70 + Int32(i), port: 3000 + UInt16(i), command: "s\(i)"), now: t0)
-      e.stoppedAt = t0 + Double(i)
+      e.stoppedAt = t0 - age * 86400
       entries.append(e)
     }
-    var h = History(entries: entries, limit: 3)
-    h.prune()
-    #expect(h.stopped.map(\.port) == [3004, 3003, 3002])
+    var h = History(entries: entries, days: 30)
+    h.prune(now: t0)
+    #expect(h.stopped.map(\.port) == [3000, 3001, 3002])
+  }
+
+  @Test func pruneHasNoCountLimit() {
+    let entries = (0..<600).map { i in
+      var e = HistoryEntry(server: server(root: 2000 + Int32(i), port: 20000 + UInt16(i), command: "s\(i)"), now: t0)
+      e.stoppedAt = t0 - Double(i)
+      return e
+    }
+    var h = History(entries: entries)
+    h.prune(now: t0)
+    #expect(h.stopped.count == 600)
+  }
+
+  @Test func aRunningServerNeverExpires() {
+    var h = History(days: 1)
+    h.reconcile([server(root: 75, port: 3000, command: "s")], now: t0)
+    h.prune(now: t0 + 90 * 86400)
+    #expect(h.entries.count == 1)
+  }
+
+  @Test func aShorterTimeRemovesOlderServersAtOnce() {
+    var e = HistoryEntry(server: server(root: 76, port: 3000, command: "s"), now: t0)
+    e.stoppedAt = t0 - 10 * 86400
+    var h = History(entries: [e], days: 30)
+    h.prune(now: t0)
+    #expect(h.stopped.count == 1)
+    h.days = 7
+    h.prune(now: t0)
+    #expect(h.stopped.isEmpty)
   }
 
   @Test func historyFilesWithoutProcsStillLoad() throws {
@@ -142,8 +171,12 @@ private func server(
     mock.stoppedAt = t0
     var deck = HistoryEntry(server: server(root: 93, port: 8947, command: "deck"), now: t0)
     deck.stoppedAt = t0 + 2
-    var h = History(entries: [app, api, mock, deck], limit: 2)
-    h.prune()
+    // The needed ones stopped long ago, the others recently.
+    let now = t0 + 60 * 86400
+    app.stoppedAt = now - 86400
+    deck.stoppedAt = now - 86400
+    var h = History(entries: [app, api, mock, deck], days: 30)
+    h.prune(now: now)
     #expect(Set(h.stopped.map(\.port)) == [3102, 8947, 8002, 8090])
   }
 

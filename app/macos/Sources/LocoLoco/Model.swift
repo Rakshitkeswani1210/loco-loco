@@ -71,6 +71,8 @@ struct Row: Identifiable, Equatable {
   let entryID: UUID?
   let server: Server?
   let logPath: String?
+  /// In search results, the page title when that's what matched. Shown in place of the name.
+  var matchedTitle: String?
 
   var hasLog: Bool { logPath.map { FileManager.default.fileExists(atPath: $0) } ?? false }
   var canStop: Bool { group == .running && entryID != nil && server != nil && state == .idle }
@@ -149,6 +151,9 @@ struct Rows: Equatable {
   /// How many Stopped lines aren't shown until More, and the servers in them.
   var hiddenItems = 0
   var hiddenServers = 0
+  /// Search results: Running and Stopped hold the matches as plain rows, and `hostedMatches` the links.
+  var isSearch = false
+  var hostedMatches: [HostedRow] = []
 
   var hasMore: Bool { hiddenItems > 0 }
   /// Top to bottom, as the arrow keys move.
@@ -163,7 +168,14 @@ struct Rows: Equatable {
         if l.hidden > 0 { ids.append(l.moreID) }
       }
     }
-    return ids + (hasMore ? [Rows.more] : [])
+    return ids + (hasMore ? [Rows.more] : []) + hostedMatches.map(\.id)
+  }
+  /// Open lines with another item after them, each ending in a gap.
+  var lineGaps: Int {
+    stoppedItems.dropLast().reduce(0) { n, item in
+      if case .line(let l) = item, l.open { return n + 1 }
+      return n
+    }
   }
   /// Rows under the Stopped header, for the panel's height.
   var stoppedLines: Int {
@@ -243,7 +255,8 @@ final class Model {
 
   private(set) var showCount: Bool
   private(set) var showAll: Bool
-  private(set) var historyLimit: Int
+  /// How many days of stopped servers to keep.
+  private(set) var historyDays: Int
   private(set) var groupByProject: Bool
   /// Project names you chose, by project folder.
   private(set) var projectNames: [String: String]
@@ -274,12 +287,20 @@ final class Model {
   /// The link just copied, or project header, which shows a check for a moment.
   private(set) var copied: String?
   var expanded = false
-  /// Stopped project lines opened or closed by hand, by project folder, until the panel closes.
+  /// Stopped project lines opened or closed by hand, by project folder, until the app quits.
   /// A line whose newest server didn't start opens by itself, so this flips it.
   var toggledProjects: Set<String> = []
   /// Project lines whose More was chosen: they list every stopped server.
   var fullProjects: Set<String> = []
   var scrolls = false
+  /// The search field is open, in place of the tabs.
+  private(set) var searching = false
+  /// What's typed in it.
+  private(set) var query = ""
+  /// The field, so a key that lands on the input view can go back to it.
+  @ObservationIgnored weak var searchField: NSTextField?
+  /// Gives the keyboard back to the input view once the field is gone.
+  @ObservationIgnored var restoreKeys: (() -> Void)?
   /// Set only by the test hooks, to show just these ports in screenshots. Scanning and history are unaffected.
   var onlyPorts: Set<UInt16>?
 
@@ -362,13 +383,13 @@ final class Model {
   init() {
     let d = UserDefaults.standard
     d.register(defaults: [
-      "showCount": true, "showAll": false, "historyLimit": 20, "groupByProject": false, "shortcut": Shortcut.standard.storage,
+      "showCount": true, "showAll": false, "historyDays": 30, "groupByProject": false, "shortcut": Shortcut.standard.storage,
       "appearance": Appearance.system.rawValue, "transparent": false, "showPreviews": true,
       "panelTab": PanelTab.local.rawValue,
     ])
     showCount = d.bool(forKey: "showCount")
     showAll = d.bool(forKey: "showAll")
-    historyLimit = d.integer(forKey: "historyLimit")
+    historyDays = d.integer(forKey: "historyDays")
     groupByProject = d.bool(forKey: "groupByProject")
     projectNames = d.dictionary(forKey: "projectNames") as? [String: String] ?? [:]
     projectTints = d.dictionary(forKey: "projectTints") as? [String: Int] ?? [:]
@@ -377,8 +398,8 @@ final class Model {
     transparent = d.bool(forKey: "transparent")
     showPreviews = d.bool(forKey: "showPreviews")
     tab = PanelTab(rawValue: d.string(forKey: "panelTab") ?? "") ?? .local
-    history = History(entries: [], limit: d.integer(forKey: "historyLimit"))
-    history = History(entries: History.load(from: historyURL), limit: historyLimit)
+    history = History(entries: [], days: d.integer(forKey: "historyDays"))
+    history = History(entries: History.load(from: historyURL), days: historyDays)
     clearedTasks = history.removeTasks() > 0
     hostedLinks = Hosted.load(from: linksURL)
   }
@@ -420,13 +441,18 @@ final class Model {
       }
     }
     out.running.sort { ($1.time, $0.port, $0.id) < ($0.time, $1.port, $1.id) }
-    if groupByProject { group(&out) }
+    let words = searching ? Search.words(query) : []
+    if groupByProject, words.isEmpty { group(&out) }
 
     let stopped = history.stopped.filter { !shown.contains($0.id) && busy[$0.id] == nil && (only?.contains($0.port) ?? true) }
     out.stoppedTotal = stopped.count
     func row(_ e: HistoryEntry) -> Row {
       Row(id: e.id.uuidString, group: .stopped, port: e.port, ports: e.ports, name: e.name, folder: e.projectDir,
           project: tag(e.projectRoot), time: e.stoppedAt ?? e.lastSeenAt, failure: e.failure, state: .idle, entryID: e.id, server: nil, logPath: e.logPath)
+    }
+    if !words.isEmpty {
+      search(&out, stopped: stopped.map(row), words: words)
+      return out
     }
     // One line per project with two or more, where its newest one would be. A server with no project stays a row.
     var byProject: [String: [HistoryEntry]] = [:]
@@ -545,6 +571,71 @@ final class Model {
   }
 
   var stoppable: [UUID] { rows.running.filter(\.canStop).compactMap(\.entryID) }
+
+  // MARK: Search
+
+  /// Words typed in the open field. Empty until there's something to look for, and the tab's own list shows.
+  var isSearching: Bool { searching && !Search.words(query).isEmpty }
+
+  /// Fills `out` with what matches, best first and newest first within that. Open lines don't apply: every match is a row.
+  private func search(_ out: inout Rows, stopped: [Row], words: [String]) {
+    func ranked<T>(_ items: [T], _ fields: (T) -> Search.Fields) -> [(item: T, match: Search.Match)] {
+      let found = items.enumerated().compactMap { i, item in
+        Search.match(fields(item), words: words).map { (i, item, $0) }
+      }
+      return found.sorted { ($0.2.rank, $0.0) < ($1.2.rank, $1.0) }.map { ($0.1, $0.2) }
+    }
+    func matches(_ rows: [Row]) -> [Row] {
+      ranked(rows, fields(of:)).map { found in
+        var r = found.item
+        if found.match.showsTitle { r.matchedTitle = r.entryID.flatMap { history[$0]?.title } }
+        return r
+      }
+    }
+    out.isSearch = true
+    out.running = matches(out.running)
+    out.stopped = matches(stopped)
+    out.stoppedItems = out.stopped.map(StoppedItem.row)
+    out.stoppedTotal = out.stopped.count
+    let links = hosted.flatMap(\.rows).sorted { ($0.link.deployedAt ?? .distantPast) > ($1.link.deployedAt ?? .distantPast) }
+    out.hostedMatches = ranked(links) { r in
+      Search.Fields(name: r.link.title, project: r.tag?.name, folder: shortened(r.link.folder ?? ""), command: r.link.url)
+    }.map(\.item)
+  }
+
+  private func fields(of r: Row) -> Search.Fields {
+    let e = r.entryID.flatMap { history[$0] }
+    return Search.Fields(
+      name: r.name, ports: r.ports, project: r.project?.name, folder: shortened(r.folder),
+      command: shortened(e?.command ?? r.server?.command ?? ""), title: e?.title)
+  }
+
+  /// Without the home folder, or your user name would match every server.
+  private func shortened(_ path: String) -> String { path.replacingOccurrences(of: projectHome, with: "~") }
+
+  /// Opens the field. `text` is the key that started it, when typing did.
+  func startSearch(_ text: String = "") {
+    searching = true
+    preview = nil
+    setQuery(text)
+  }
+
+  /// The best match is selected, so Return acts on it.
+  func setQuery(_ text: String) {
+    guard text != query || highlight == nil else { return }
+    query = text
+    keyboardDriven = true
+    hot = nil
+    highlight = isSearching ? rows.order.first : nil
+  }
+
+  func endSearch() {
+    searching = false
+    query = ""
+    highlight = nil
+    hot = nil
+    restoreKeys?()
+  }
 
   /// Opens or closes a project's line in Stopped.
   func toggleProject(_ root: String) {
@@ -907,10 +998,10 @@ final class Model {
     if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
   }
 
-  func setHistoryLimit(_ n: Int) {
-    historyLimit = n
-    UserDefaults.standard.set(n, forKey: "historyLimit")
-    history.limit = n
+  func setHistoryDays(_ n: Int) {
+    historyDays = n
+    UserDefaults.standard.set(n, forKey: "historyDays")
+    history.days = n
     history.prune(keeping: Set(busy.keys))
     save()
   }
@@ -1102,7 +1193,8 @@ final class Model {
   // MARK: Preview
 
   /// Hover: the card opens after half a second on a row, and follows at once while it's open.
-  /// From the keyboard it opens with Space and follows the arrow keys.
+  /// From the keyboard it opens with Space and follows the arrow keys. In search results, where Space is typed,
+  /// it opens after a short pause on a row.
   private func updatePreview() {
     previewTimer?.invalidate()
     previewTimer = nil
@@ -1111,8 +1203,8 @@ final class Model {
       return
     }
     if preview != nil { preview = h; return }
-    guard !keyboardDriven else { return }
-    let t = Timer(timeInterval: 0.5, repeats: false) { [weak self] _ in
+    guard !keyboardDriven || isSearching else { return }
+    let t = Timer(timeInterval: isSearching ? 0.3 : 0.5, repeats: false) { [weak self] _ in
       MainActor.assumeIsolated {
         guard let self, self.highlight == h, self.menuRow == nil, !self.moreMenuOpen else { return }
         self.preview = h
@@ -1256,11 +1348,20 @@ final class Model {
     var hot: String?
   }
 
+  private static let headerButtons: Set<String> = ["menu", "search", "searchClose"]
+  private static let headerIDs = headerButtons.union(["row:tab:local", "row:tab:hosted"])
+
   func target(at p: CGPoint) -> Target {
-    if let clip = frames["clip"], !clip.contains(p) { return Target() }
     var t = Target()
+    // Scrolled rows pass under the header, so outside the scroll area only the header counts.
+    if let clip = frames["clip"], !clip.contains(p) {
+      for (id, r) in frames where r.contains(p) && Self.headerIDs.contains(id) {
+        if id.hasPrefix("row:") { t.row = String(id.dropFirst(4)) } else { t.hot = id }
+      }
+      return t
+    }
     for (id, r) in frames where r.contains(p) {
-      if id == "menu" || id.hasPrefix("btn:") { t.hot = id }
+      if Self.headerButtons.contains(id) || id.hasPrefix("btn:") { t.hot = id }
       else if id.hasPrefix("row:") { t.row = String(id.dropFirst(4)) }
     }
     return t
@@ -1297,7 +1398,7 @@ final class Model {
   }
 
   func moveHighlight(_ delta: Int) {
-    let order = tab == .local ? rows.order : hosted.flatMap(\.rows).map(\.id)
+    let order = tab == .local || isSearching ? rows.order : hosted.flatMap(\.rows).map(\.id)
     guard !order.isEmpty else { return }
     keyboardDriven = true
     hot = nil
@@ -1318,8 +1419,8 @@ final class Model {
     staleUnderPointer = false
     keyboardDriven = false
     expanded = false
-    toggledProjects = []
-    fullProjects = []
+    searching = false
+    query = ""
     preview = nil
   }
 }

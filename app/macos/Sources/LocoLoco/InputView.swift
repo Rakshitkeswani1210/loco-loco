@@ -20,7 +20,12 @@ final class InputView: NSView, NSViewToolTipOwner {
   override var isFlipped: Bool { true }
   override var acceptsFirstResponder: Bool { true }
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-  override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
+  /// Everything but the search field, which handles its own clicks.
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    guard frame.contains(point) else { return nil }
+    if model.frames["searchField"]?.contains(convert(point, from: superview)) == true { return nil }
+    return self
+  }
 
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
@@ -82,7 +87,11 @@ final class InputView: NSView, NSViewToolTipOwner {
 
   /// `btn:<row>:<action>` or `row:<row>`. Row ids for projects hold a colon themselves (`line:<folder>`).
   private func activate(_ target: String) {
-    if target.hasPrefix("btn:"), let colon = target.lastIndex(of: ":"),
+    if target == "search" {
+      model.startSearch()
+    } else if target == "searchClose" {
+      model.endSearch()
+    } else if target.hasPrefix("btn:"), let colon = target.lastIndex(of: ":"),
        let action = RowAction(rawValue: String(target[target.index(after: colon)...])) {
       model.perform(.action(String(target[target.index(target.startIndex, offsetBy: 4)..<colon]), action))
     } else if target.hasPrefix("row:") {
@@ -99,13 +108,14 @@ final class InputView: NSView, NSViewToolTipOwner {
   // MARK: Keyboard
 
   override func keyDown(with e: NSEvent) {
+    if typed(e) { return }
     switch e.keyCode {
-    case 53: model.perform(.close)
+    case 53: if model.searching { model.endSearch() } else { model.perform(.close) }
     case 125: model.moveHighlight(1)
     case 126: model.moveHighlight(-1)
     case 36, 76: if let h = model.highlight { model.perform(.primary(h)) }
     case 49: model.togglePreview()
-    case 48: model.setTab(model.tab == .local ? .hosted : .local)
+    case 48: if !model.searching { model.setTab(model.tab == .local ? .hosted : .local) }
     // Right opens a project's line in Stopped, Left closes it.
     case 123, 124:
       if let line = model.rows.line(model.highlight), line.open != (e.keyCode == 124) { model.toggleProject(line.root) }
@@ -113,10 +123,48 @@ final class InputView: NSView, NSViewToolTipOwner {
     }
   }
 
+  /// A letter or number opens the search field. With the field open, a key that landed here, after a click on a row,
+  /// goes to the field.
+  private func typed(_ e: NSEvent) -> Bool {
+    let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard flags.isDisjoint(with: [.command, .control]), let text = e.characters, let c = text.unicodeScalars.first else { return false }
+    let printable = !CharacterSet.controlCharacters.contains(c) && !(0xE000...0xF8FF).contains(c.value)
+    if model.searching {
+      if let field = model.searchField, printable || e.keyCode == 51 {
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.moveToEndOfDocument(nil)
+        field.currentEditor()?.keyDown(with: e)
+        return true
+      }
+      // The field isn't there yet: keys typed quicker than it appears.
+      if printable { model.setQuery(model.query + text); return true }
+      return false
+    }
+    guard printable, e.keyCode != 49 else { return false }
+    model.startSearch(text)
+    return true
+  }
+
+  /// Text editing keys for the search field, since a menu bar app has no Edit menu to hold them.
+  private func editKey(_ e: NSEvent) -> Bool {
+    guard model.searching, let editor = window?.firstResponder as? NSTextView else { return false }
+    switch e.charactersIgnoringModifiers {
+    case "v": editor.paste(nil)
+    case "x": editor.cut(nil)
+    case "a": editor.selectAll(nil)
+    case "c":
+      guard editor.selectedRange().length > 0 else { return false }
+      editor.copy(nil)
+    default: return false
+    }
+    return true
+  }
+
   override func performKeyEquivalent(with e: NSEvent) -> Bool {
     guard e.type == .keyDown, e.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
       return super.performKeyEquivalent(with: e)
     }
+    if editKey(e) { return true }
     let h = model.highlight
     switch (e.keyCode, e.charactersIgnoringModifiers ?? "") {
     case (51, _), (117, _):

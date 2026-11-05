@@ -31,6 +31,11 @@ enum Metrics {
   static let gapBelowMenuBar: CGFloat = 5
   static let screenInset: CGFloat = 6
   static let shownStopped = 5
+  /// Ends an open project line, so its rows don't run into the next line.
+  static let lineGap: CGFloat = 6
+  /// The selected tab's fill, and its text's inset within it.
+  static let tabHeight: CGFloat = 24
+  static let tabPadding: CGFloat = 6
   /// The preview card: the panel's frame, 8pt to its side, a 16:10 snapshot and 24pt rows for what it needs.
   static let previewGap: CGFloat = 8
   static let previewWidth: CGFloat = 300

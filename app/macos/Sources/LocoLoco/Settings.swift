@@ -155,8 +155,8 @@ struct SettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
       }
       Section {
-        Picker("Keep history", selection: binding(model.historyLimit) { model.setHistoryLimit($0) }) {
-          ForEach([10, 20, 50], id: \.self) { Text("\($0) servers").tag($0) }
+        Picker("Keep history", selection: binding(model.historyDays) { model.setHistoryDays($0) }) {
+          ForEach([7, 30, 90], id: \.self) { Text("\($0) days").tag($0) }
         }
       }
     }
